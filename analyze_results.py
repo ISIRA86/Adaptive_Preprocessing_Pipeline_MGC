@@ -1,8 +1,3 @@
-"""
-Results Analysis Tool
-
-Analyzes POC results and generates comparison charts for demo presentation.
-"""
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -198,7 +193,7 @@ def create_demo_summary(results_dict, output_path='./results/demo_summary.txt'):
     """Create text summary for demo presentation."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write('='*70 + '\n')
         f.write('ADAPTIVE DENOISING POC - DEMO SUMMARY\n')
         f.write('='*70 + '\n\n')

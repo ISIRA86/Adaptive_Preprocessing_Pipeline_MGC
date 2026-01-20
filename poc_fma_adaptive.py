@@ -1,13 +1,3 @@
-"""
-POC: Adaptive Denoising for FMA (Free Music Archive) Dataset
-
-FMA has real-world recording noise, making it ideal for testing adaptive denoising.
-Uses the FMA-small dataset (8GB, 8000 tracks, 8 genres).
-
-Download FMA: https://github.com/mdeff/fma
-Direct link: https://os.unil.cloud.switch.ch/fma/fma_small.zip
-Extract to: ./datasets/fma_small/
-"""
 import os
 import glob
 import random
