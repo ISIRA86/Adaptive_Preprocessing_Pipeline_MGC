@@ -1,16 +1,3 @@
-"""
-POC: Advanced Preprocessing Methods for Music Genre Classification
-Week 4-5: ML-Based Denoising, Source Separation, and LUFS Normalization
-
-This POC uses advanced preprocessing methods:
-- Spectral gating (advanced frequency-domain denoising)
-- Spleeter (vocal/accompaniment separation)
-- HPSS (harmonic-percussive separation)
-- Demucs (Facebook's state-of-the-art ML denoising)
-- LUFS normalization (loudness standardization)
-
-Adaptive framework routes audio to optimal method based on characteristics.
-"""
 import os
 import glob
 import numpy as np
@@ -23,13 +10,23 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
 from scipy import signal
+from scipy.ndimage import uniform_filter
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.signal import medfilt2d
 import warnings
 warnings.filterwarnings('ignore')
+
+# Try to import pywt for wavelet denoising (optional)
+try:
+    import pywt
+    PYWT_AVAILABLE = True
+except ImportError:
+    PYWT_AVAILABLE = False
+    print("WARNING: pywt not available. Wavelet denoising will be disabled.")
+
 
 # ----------------------------- CONFIG ---------------------------------
 SR = 22050
@@ -39,21 +36,29 @@ MEL_FRAMES = 128
 N_FFT = 2048
 HOP_LENGTH = 512
 
-MAX_SAMPLES = 3000  # Start with smaller set for testing
-EPOCHS = 10
+MAX_SAMPLES = 1000 
+EPOCHS = 20 
 BATCH_SIZE = 32
 
-FMA_AUDIO_DIR = os.path.join('.', 'datasets', 'fma_medium')
-FMA_METADATA = os.path.join('.', 'datasets', 'fma_metadata', 'tracks.csv')
+USE_MULTI_FEATURES = True 
+
+# DATASET SELECTION
+DATASET = 'fma_medium'
+
+# Use absolute paths based on this file's location
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+FMA_AUDIO_DIR = os.path.join(_PROJECT_ROOT, 'datasets', 'fma_medium')
+FMA_METADATA = os.path.join(_PROJECT_ROOT, 'datasets', 'fma_metadata', 'tracks.csv')
 
 TARGET_GENRES = ['Electronic', 'Experimental', 'Folk', 'Hip-Hop', 
                  'Instrumental', 'International', 'Pop', 'Rock']
 
 # LUFS target
-TARGET_LUFS = -23.0  # EBU R128 standard
+
+TARGET_LUFS = -23.0  
 
 # Output directories
-RESULTS_DIR = os.path.join('.', 'results_advanced')
+RESULTS_DIR = os.path.join(_PROJECT_ROOT, 'results')
 SPECTROGRAMS_DIR = os.path.join(RESULTS_DIR, 'spectrograms')
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(SPECTROGRAMS_DIR, exist_ok=True)
@@ -63,33 +68,23 @@ os.makedirs(SPECTROGRAMS_DIR, exist_ok=True)
 # ======================== SPECTRAL GATING ==============================
 def denoise_spectral_gating(audio, n_fft=N_FFT, hop_length=HOP_LENGTH, 
                             threshold_db=-40, alpha=0.1):
-    """
-    Spectral gating: More sophisticated than spectral subtraction.
-    Uses a smooth gate function instead of hard subtraction.
-    """
     try:
         stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
         mag, phase = np.abs(stft), np.angle(stft)
         
-        # Check for zero magnitude (silent audio)
         if np.max(mag) < 1e-8:
             return audio
         
         mag_db = librosa.amplitude_to_db(mag, ref=np.max)
-        
-        # Estimate noise floor (bottom 10th percentile across time)
         noise_floor = np.percentile(mag_db, 10, axis=1, keepdims=True)
         
-        # Create smooth gate
         signal_above_noise = mag_db - noise_floor
         gate = 1.0 / (1.0 + np.exp(-alpha * (signal_above_noise - threshold_db)))
         
-        # Apply gate
         mag_gated = mag * gate
         stft_clean = mag_gated * np.exp(1j * phase)
         audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
         
-        # Validate output
         if not np.isfinite(audio_clean).all():
             return audio
         
@@ -99,14 +94,8 @@ def denoise_spectral_gating(audio, n_fft=N_FFT, hop_length=HOP_LENGTH,
         return audio
 
 
-# ======================== NEW: SPLEETER ===============================
+# ======================== SPLEETER ===============================
 def separate_vocals_spleeter(audio, sr=SR):
-    """
-    Use Spleeter to separate vocals and accompaniment.
-    Returns accompaniment (music without vocals) for genre classification.
-    
-    Note: Requires spleeter package.
-    """
     try:
         from spleeter.separator import Separator
         
@@ -131,12 +120,8 @@ def separate_vocals_spleeter(audio, sr=SR):
         return audio
 
 
-# ======================== NEW: HARMONIC-PERCUSSIVE ====================
+# ======================== HARMONIC-PERCUSSIVE ====================
 def separate_harmonic_percussive(audio):
-    """
-    Librosa's harmonic-percussive source separation.
-    Returns harmonic component (useful for melodic genres).
-    """
     try:
         harmonic, percussive = librosa.effects.hpss(audio)
         
@@ -150,14 +135,8 @@ def separate_harmonic_percussive(audio):
         return audio
 
 
-# ======================== NEW: LUFS NORMALIZATION =====================
+# ======================== LUFS NORMALIZATION =====================
 def measure_lufs(audio, sr=SR):
-    """
-    Estimate LUFS (Loudness Units relative to Full Scale).
-    Simple approximation using RMS energy.
-    
-    Note: For precise LUFS, use pyloudnorm library.
-    """
     try:
         import pyloudnorm as pyln
         meter = pyln.Meter(sr)
@@ -171,9 +150,6 @@ def measure_lufs(audio, sr=SR):
 
 
 def normalize_lufs(audio, target_lufs=TARGET_LUFS, sr=SR):
-    """
-    Normalize audio to target LUFS level.
-    """
     try:
         import pyloudnorm as pyln
         
@@ -214,17 +190,8 @@ def normalize_lufs(audio, target_lufs=TARGET_LUFS, sr=SR):
         return audio
 
 
-# ======================== NEW: DEMUCS (ML DENOISING) =================
+# ======================== DEMUCS (ML DENOISING) ======================
 def denoise_demucs(audio, sr=SR):
-    """
-    Apply ML-based denoising using Demucs (Facebook's deep learning audio separation).
-    Demucs uses a hybrid transformer architecture trained on massive datasets.
-    
-    Note: Requires demucs: pip install demucs
-    
-    For denoising, we use the 'htdemucs' model which separates clean vocals/instruments
-    from noise/artifacts, then reconstruct the clean audio.
-    """
     try:
         import torch
         from demucs.pretrained import get_model
@@ -287,41 +254,56 @@ def denoise_demucs(audio, sr=SR):
 
 # ======================== ADAPTIVE ROUTING LOGIC ======================
 def characterize_audio_type(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
-    """
-    Analyze audio to determine optimal preprocessing method.
-    Returns: 'broadband_noise', 'harmonic_rich', 'vocal_heavy', or 'general'
-    """
-    # Spectral flatness (tonal vs noise-like)
-    sf = librosa.feature.spectral_flatness(y=audio, n_fft=n_fft, hop_length=hop_length)
-    mean_sf = float(np.mean(sf))
+    try:
+        analysis_audio = audio[:SR * 10] if len(audio) > SR * 10 else audio
+        
+        # Spectral flatness (tonal vs noise-like)
+        sf = librosa.feature.spectral_flatness(y=analysis_audio, n_fft=n_fft, hop_length=hop_length)
+        mean_sf = float(np.mean(sf))
+        
+        # Harmonic-to-noise ratio (use margin parameter to reduce memory)
+        harmonic, percussive = librosa.effects.hpss(analysis_audio, margin=3.0)
+        harmonic_energy = np.sum(harmonic ** 2)
+        percussive_energy = np.sum(percussive ** 2)
+        total_energy = harmonic_energy + percussive_energy
+        
+        harmonic_ratio = harmonic_energy / (total_energy + 1e-8)
+        
+        # Spectral centroid (frequency content)
+        sc = librosa.feature.spectral_centroid(y=analysis_audio, sr=SR, n_fft=n_fft, hop_length=hop_length)
+        mean_sc = float(np.mean(sc))
+        
+        # Decision logic
+        if mean_sf > 0.7:
+            return 'broadband_noise'  # High noise floor → Spectral gating
+        elif harmonic_ratio > 0.7:
+            return 'harmonic_rich'  # Strong harmonics → HPSS
+        elif 1500 < mean_sc < 4000:
+            return 'vocal_heavy'  # Mid-frequency energy → Spleeter
+        else:
+            return 'general'  # Everything else → Demucs ML
     
-    # Harmonic-to-noise ratio
-    harmonic, percussive = librosa.effects.hpss(audio)
-    harmonic_energy = np.sum(harmonic ** 2)
-    percussive_energy = np.sum(percussive ** 2)
-    total_energy = harmonic_energy + percussive_energy
+    except MemoryError:
+        # Fallback: Use simpler analysis without HPSS
+        print("  [Memory warning: Using simplified characterization]")
+        sf = librosa.feature.spectral_flatness(y=audio[:SR*5], n_fft=n_fft, hop_length=hop_length)
+        mean_sf = float(np.mean(sf))
+        
+        if mean_sf > 0.7:
+            return 'broadband_noise'
+        elif mean_sf < 0.3:
+            return 'harmonic_rich'
+        else:
+            return 'general'
     
-    harmonic_ratio = harmonic_energy / (total_energy + 1e-8)
-    
-    # Spectral centroid (frequency content)
-    sc = librosa.feature.spectral_centroid(y=audio, sr=SR, n_fft=n_fft, hop_length=hop_length)
-    mean_sc = float(np.mean(sc))
-    
-    # Decision logic
-    if mean_sf > 0.7:
-        return 'broadband_noise'  # High noise floor → Spectral gating
-    elif harmonic_ratio > 0.7:
-        return 'harmonic_rich'  # Strong harmonics → HPSS
-    elif 1500 < mean_sc < 4000:
-        return 'vocal_heavy'  # Mid-frequency energy → Spleeter
-    else:
-        return 'general'  # Everything else → Demucs ML
+    except Exception as e:
+        print(f"  [Warning: Characterization error: {e}, using 'general']")
+        return 'general'
 
 
 # ======================== FEATURE EXTRACTION ==========================
 def audio_to_mel(audio, sr=SR, n_mels=N_MELS, n_fft=N_FFT, 
                  hop_length=HOP_LENGTH, target_frames=MEL_FRAMES):
-    """Convert audio to normalized mel-spectrogram."""
     if len(audio) < sr:
         audio = np.pad(audio, (0, sr - len(audio)))
     
@@ -337,6 +319,37 @@ def audio_to_mel(audio, sr=SR, n_mels=N_MELS, n_fft=N_FFT,
         mel_db = mel_db[:, :target_frames]
     
     return mel_db.astype(np.float32)
+
+
+def audio_to_multi_features(audio, sr=SR, n_mels=N_MELS, n_fft=N_FFT, 
+                            hop_length=HOP_LENGTH, target_frames=MEL_FRAMES):
+    if len(audio) < sr:
+        audio = np.pad(audio, (0, sr - len(audio)))
+    
+    mel = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=n_mels, 
+                                          n_fft=n_fft, hop_length=hop_length)
+    mel_db = librosa.power_to_db(mel, ref=np.max)
+    chroma = librosa.feature.chroma_stft(y=audio, sr=sr, n_fft=n_fft, hop_length=hop_length)
+    contrast = librosa.feature.spectral_contrast(y=audio, sr=sr, n_fft=n_fft, hop_length=hop_length)
+    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=20, n_fft=n_fft, hop_length=hop_length)
+    
+    features = np.vstack([mel_db, chroma, contrast, mfcc])
+    features = (features - np.mean(features, axis=1, keepdims=True)) / (np.std(features, axis=1, keepdims=True) + 1e-8)
+    
+    if features.shape[1] < target_frames:
+        pad_width = target_frames - features.shape[1]
+        features = np.pad(features, ((0, 0), (0, pad_width)), mode='constant')
+    else:
+        features = features[:, :target_frames]
+    
+    target_freq_bins = 128
+    if features.shape[0] < target_freq_bins:
+        pad_height = target_freq_bins - features.shape[0]
+        features = np.pad(features, ((0, pad_height), (0, 0)), mode='constant')
+    else:
+        features = features[:target_freq_bins, :]
+    
+    return features.astype(np.float32)
 
 
 # ======================== VISUALIZATION ================================
@@ -366,11 +379,36 @@ def save_spectrogram_comparison(audio_original, audio_processed, method_name, sa
     plt.savefig(filepath, dpi=150)
     plt.close()
     print(f'  Saved spectrogram: {filepath}')
+    return filepath
+
+
+def generate_spectrogram_figure(audio_original, audio_processed, method_name, sample_idx=0):
+    """Generate spectrogram comparison figure for display (returns fig object)."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+    
+    # Original
+    mel_orig = librosa.feature.melspectrogram(y=audio_original, sr=SR, n_mels=N_MELS)
+    mel_orig_db = librosa.power_to_db(mel_orig, ref=np.max)
+    img1 = axes[0].imshow(mel_orig_db, aspect='auto', origin='lower', cmap='viridis')
+    axes[0].set_title(f'Original Audio (Baseline) - Sample {sample_idx}')
+    axes[0].set_ylabel('Mel Frequency Bins')
+    plt.colorbar(img1, ax=axes[0], format='%+2.0f dB')
+    
+    # Processed
+    mel_proc = librosa.feature.melspectrogram(y=audio_processed, sr=SR, n_mels=N_MELS)
+    mel_proc_db = librosa.power_to_db(mel_proc, ref=np.max)
+    img2 = axes[1].imshow(mel_proc_db, aspect='auto', origin='lower', cmap='viridis')
+    axes[1].set_title(f'Processed Audio ({method_name}) - Sample {sample_idx}')
+    axes[1].set_ylabel('Mel Frequency Bins')
+    axes[1].set_xlabel('Time Frames')
+    plt.colorbar(img2, ax=axes[1], format='%+2.0f dB')
+    
+    plt.tight_layout()
+    return fig
 
 
 # ======================== EVALUATION METRICS ===========================
 def calculate_comprehensive_metrics(y_true, y_pred, y_pred_proba, genres):
-    """Calculate all required metrics: Accuracy, Precision, Recall, F1, AUC-ROC."""
     metrics = {}
     
     # Accuracy
@@ -417,22 +455,573 @@ def calculate_comprehensive_metrics(y_true, y_pred, y_pred_proba, genres):
 
 # ======================== PREPROCESSING PIPELINES =====================
 def baseline_pipeline(audio_batch):
-    """Baseline: No preprocessing (raw audio to mel-spectrogram)."""
     X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    
     for audio in audio_batch:
-        mel = audio_to_mel(audio)
-        X.append(mel)
+        features = feature_func(audio)
+        X.append(features)
     return np.array(X)[..., np.newaxis]
 
 
-def adaptive_pipeline(audio_batch):
+def assess_audio_quality(audio, sr=SR):
     """
-    Adaptive: Route each audio to optimal preprocessing method.
-    Routes based on audio characteristics (not noise type).
+    Intelligent audio quality assessment to determine if preprocessing is needed.
     
-    This is the lightweight version without Demucs.
+    Returns:
+        quality_score (float): 0-100, where 100 = perfect quality
+        needs_preprocessing (bool): True if quality < threshold
+        recommendation (str): What preprocessing (if any) to apply
     """
+    # Analyze first 10 seconds (enough for assessment)
+    audio_segment = audio[:sr*10]
+    
+    # 1. SNR Estimation (Signal-to-Noise Ratio)
+    signal_power = np.mean(audio_segment**2)
+    noise_floor = np.std(audio_segment[:1000])  # First 1000 samples as noise estimate
+    snr_db = 10 * np.log10(signal_power / (noise_floor**2 + 1e-10))
+    snr_score = min(100, max(0, (snr_db - 5) * 4))  # 5dB=0, 30dB=100
+    
+    # 2. Spectral Flatness (noise indicator - lower is better for music)
+    sf = librosa.feature.spectral_flatness(y=audio_segment, n_fft=N_FFT, hop_length=HOP_LENGTH)
+    mean_sf = float(np.mean(sf))
+    sf_score = (1 - mean_sf) * 100  # Lower flatness = more tonal = higher score
+    
+    # 3. Zero Crossing Rate (stability indicator)
+    zcr = librosa.feature.zero_crossing_rate(audio_segment, frame_length=2048, hop_length=512)
+    zcr_normalized = float(np.mean(zcr)) / 0.1  # Normalize to 0-1 range
+    zcr_score = (1 - min(1, zcr_normalized)) * 100  # Lower ZCR = more stable = higher score
+    
+    # 4. Dynamic Range (clipping detection)
+    peak_value = np.max(np.abs(audio_segment))
+    clipping_detected = peak_value > 0.99
+    dynamic_score = 100 if not clipping_detected else 50
+    
+    # 5. Spectral Rolloff (frequency content quality)
+    rolloff = librosa.feature.spectral_rolloff(y=audio_segment, sr=sr, n_fft=N_FFT, hop_length=HOP_LENGTH)
+    rolloff_normalized = float(np.mean(rolloff)) / (sr / 2)
+    rolloff_score = rolloff_normalized * 100  # Higher rolloff = more content = better
+    
+    quality_score = (
+        snr_score * 0.35 +
+        sf_score * 0.25 +
+        zcr_score * 0.15 +
+        dynamic_score * 0.15 +
+        rolloff_score * 0.10
+    )
+    
+    if quality_score >= 75:
+        needs_preprocessing = False
+        recommendation = 'skip'
+    elif quality_score >= 60:
+        needs_preprocessing = True
+        recommendation = 'very_light'  # 2% reduction
+    elif quality_score >= 40:
+        needs_preprocessing = True
+        recommendation = 'light'  # 5% reduction
+    else:
+        needs_preprocessing = True
+        recommendation = 'moderate'  # 10% reduction
+    
+    return quality_score, needs_preprocessing, recommendation
+
+
+def adaptive_pipeline_intelligent(audio_batch):
     X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    
+    method_stats = {
+        'skipped_high_quality': 0,
+        'very_light_denoising': 0,
+        'light_denoising': 0,
+        'moderate_denoising': 0
+    }
+    
+    quality_scores = []
+    
+    for audio in audio_batch:
+        # Assess audio quality intelligently
+        quality_score, needs_preprocessing, recommendation = assess_audio_quality(audio)
+        quality_scores.append(quality_score)
+        
+        processed_audio = audio.copy()
+        
+        if recommendation == 'skip':
+            method_stats['skipped_high_quality'] += 1
+            
+        elif recommendation == 'very_light':
+            processed_audio = denoise_spectral_gating(audio, threshold_db=-50, alpha=0.02)
+            method_stats['very_light_denoising'] += 1
+            
+        elif recommendation == 'light':
+            # Fair quality (40-60) → 5% noise reduction
+            processed_audio = denoise_spectral_gating(audio, threshold_db=-45, alpha=0.05)
+            method_stats['light_denoising'] += 1
+            
+        else:  # moderate
+            # Poor quality (<40) → 10% noise reduction
+            processed_audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.10)
+            method_stats['moderate_denoising'] += 1
+        
+        features = feature_func(processed_audio)
+        X.append(features)
+    
+    # Statistics
+    avg_quality = np.mean(quality_scores)
+    min_quality = np.min(quality_scores)
+    max_quality = np.max(quality_scores)
+    
+    print(f'  Intelligent quality-based preprocessing:')
+    print(f'    Average quality score: {avg_quality:.1f}/100')
+    print(f'    Quality range: {min_quality:.1f} - {max_quality:.1f}')
+    print(f'  ')
+    for method, count in method_stats.items():
+        if count > 0:
+            pct = (count / len(audio_batch)) * 100
+            print(f'    {method:25s}: {count:4d} samples ({pct:5.1f}%)')
+    
+    return np.array(X)[..., np.newaxis], method_stats
+
+
+def adaptive_pipeline_minimal(audio_batch):
+    X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    
+    method_stats = {
+        'no_preprocessing': 0,
+        'very_light_denoising': 0,
+        'moderate_denoising': 0
+    }
+    
+    for audio in audio_batch:
+        # Quick SNR estimation (first 5 seconds only)
+        signal_power = np.mean(audio[:SR*5]**2)
+        noise_estimate = np.std(audio[:1000])  # First 1000 samples as noise floor
+        snr_db = 10 * np.log10(signal_power / (noise_estimate**2 + 1e-10))
+        
+        # Spectral flatness (noise indicator)
+        sf = librosa.feature.spectral_flatness(y=audio[:SR*5], n_fft=N_FFT, hop_length=HOP_LENGTH)
+        mean_sf = float(np.mean(sf))
+        
+        processed_audio = audio.copy()
+        
+        # ULTRA-CONSERVATIVE: Only process very noisy samples
+        if snr_db < 10 and mean_sf > 0.75:
+            # VERY noisy (SNR < 10dB, high noise floor) → Moderate denoising
+            # This should be <5% of FMA-medium samples
+            processed_audio = denoise_spectral_gating(audio, threshold_db=-45, alpha=0.05)  # Very gentle
+            method_stats['moderate_denoising'] += 1
+            
+        elif snr_db < 15 and mean_sf > 0.7:
+            # Moderately noisy → Very light denoising (5% reduction)
+            # This should be ~5-10% of samples
+            processed_audio = denoise_spectral_gating(audio, threshold_db=-50, alpha=0.02)  # Extremely gentle
+            method_stats['very_light_denoising'] += 1
+            
+        else:
+            # Everything else (85-90% of samples) → NO PREPROCESSING
+            # Preserve original audio to maintain genre characteristics
+            method_stats['no_preprocessing'] += 1
+        
+        features = feature_func(processed_audio)
+        X.append(features)
+    
+    print(f'  Minimal preprocessing applied:')
+    for method, count in method_stats.items():
+        if count > 0:
+            pct = (count / len(audio_batch)) * 100
+            print(f'    {method:25s}: {count:4d} samples ({pct:5.1f}%)')
+    
+    return np.array(X)[..., np.newaxis], method_stats
+
+
+# ======================== MODEL-BASED ROUTING SYSTEM ====================
+
+def extract_audio_features_for_routing(audio, sr=SR):
+    """Extract features for preprocessing method routing decision"""
+    try:
+        # Limit to first 5 seconds for speed
+        audio_segment = audio[:sr*5] if len(audio) > sr*5 else audio
+        
+        # SNR estimation
+        signal_power = np.mean(audio_segment**2)
+        noise_estimate = np.std(audio_segment[:1000])
+        snr_db = 10 * np.log10(signal_power / (noise_estimate**2 + 1e-10))
+        
+        # Spectral features
+        sf = librosa.feature.spectral_flatness(y=audio_segment, n_fft=N_FFT, hop_length=HOP_LENGTH)
+        mean_sf = float(np.mean(sf))
+        std_sf = float(np.std(sf))
+        
+        sc = librosa.feature.spectral_centroid(y=audio_segment, sr=sr, n_fft=N_FFT, hop_length=HOP_LENGTH)
+        mean_sc = float(np.mean(sc))
+        
+        # Zero crossing rate
+        zcr = librosa.feature.zero_crossing_rate(audio_segment, hop_length=HOP_LENGTH)
+        mean_zcr = float(np.mean(zcr))
+        
+        # Harmonic-percussive characteristics
+        try:
+            harmonic, percussive = librosa.effects.hpss(audio_segment, margin=3.0)
+            harmonic_energy = np.sum(harmonic**2)
+            percussive_energy = np.sum(percussive**2)
+            total_energy = np.sum(audio_segment**2) + 1e-10
+            
+            harmonic_ratio = harmonic_energy / total_energy
+            percussive_ratio = percussive_energy / total_energy
+        except:
+            harmonic_ratio = 0.5
+            percussive_ratio = 0.5
+        
+        # RMS energy
+        rms = librosa.feature.rms(y=audio_segment, hop_length=HOP_LENGTH)
+        mean_rms = float(np.mean(rms))
+        std_rms = float(np.std(rms))
+        
+        # Spectral bandwidth
+        bw = librosa.feature.spectral_bandwidth(y=audio_segment, sr=sr, n_fft=N_FFT, hop_length=HOP_LENGTH)
+        mean_bw = float(np.mean(bw))
+        
+        features = np.array([
+            snr_db,
+            mean_sf,
+            std_sf,
+            mean_sc / sr,  # Normalize
+            mean_zcr,
+            harmonic_ratio,
+            percussive_ratio,
+            mean_rms,
+            std_rms,
+            mean_bw / sr  # Normalize
+        ])
+        
+        return features
+    except:
+        return np.zeros(10)  # Return zero features on error
+
+
+def create_routing_model(input_dim=10, n_methods=9):
+    """
+    Create neural network for preprocessing method selection.
+    
+    Args:
+        input_dim: Number of audio features
+        n_methods: Number of preprocessing methods
+    
+    Returns:
+        Compiled Keras model
+    """
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+    from tensorflow.keras.optimizers import Adam
+    
+    model = Sequential([
+        Dense(64, activation='relu', input_shape=(input_dim,)),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(32, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(16, activation='relu'),
+        Dense(n_methods, activation='softmax')
+    ])
+    
+    model.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    return model
+
+
+# Global variable to store trained routing model
+ROUTING_MODEL = None
+METHOD_ID_TO_NAME = {
+    0: 'none',
+    1: 'spectral_gating',
+    2: 'hpss',
+    3: 'wiener_gentle',
+    4: 'spectral_subtraction',
+    5: 'wavelet',
+    6: 'non_local_means',
+    7: 'adaptive_wiener',
+    8: 'multiband_spectral'
+}
+
+
+def apply_preprocessing_method(audio, method_id):
+    """Apply preprocessing method by ID"""
+    if method_id == 0:
+        return audio  # No preprocessing
+    elif method_id == 1:
+        return denoise_spectral_gating(audio, threshold_db=-40, alpha=0.1)
+    elif method_id == 2:
+        harmonic, _ = librosa.effects.hpss(audio, margin=3.0)
+        return harmonic
+    elif method_id == 3:
+        return denoise_wiener_filter_gentle(audio)
+    elif method_id == 4:
+        return denoise_spectral_subtraction_gentle(audio)
+    elif method_id == 5:
+        return denoise_wavelet(audio)
+    elif method_id == 6:
+        return denoise_non_local_means(audio)
+    elif method_id == 7:
+        return denoise_adaptive_wiener(audio)
+    elif method_id == 8:
+        return denoise_multiband_spectral_subtraction(audio)
+    else:
+        return audio
+
+
+def generate_routing_training_data(audio_batch, labels, n_samples=500, classifier_model=None):
+    """
+    Generate training data for routing model by testing each preprocessing method.
+    
+    Args:
+        audio_batch: List/array of audio signals (numpy arrays)
+        labels: Corresponding labels
+        n_samples: Number of samples to use for training data generation
+        classifier_model: Pre-trained classifier to evaluate preprocessing quality
+    
+    Returns:
+        X_routing: Audio features for routing
+        y_routing: Best preprocessing method IDs (one-hot encoded)
+    """
+    from tensorflow.keras.utils import to_categorical
+    
+    print(f"Generating training data for routing model with {min(n_samples, len(audio_batch))} samples...")
+    
+    # Sample subset
+    n_samples_actual = min(n_samples, len(audio_batch))
+    indices = np.random.choice(len(audio_batch), n_samples_actual, replace=False)
+    
+    X_routing = []
+    y_routing = []
+    
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    n_methods = len(METHOD_ID_TO_NAME)
+    
+    print(f"Testing {n_methods} preprocessing methods on each sample...")
+    for i, idx in enumerate(indices):
+        if i % 50 == 0:
+            print(f"  Progress: {i}/{n_samples_actual} samples processed...")
+        
+        try:
+            audio = audio_batch[idx]
+            
+            # Extract routing features
+            routing_features = extract_audio_features_for_routing(audio)
+            
+            # Test each preprocessing method
+            method_scores = []
+            for method_id in range(n_methods):
+                try:
+                    processed_audio = apply_preprocessing_method(audio, method_id)
+                    features = feature_func(processed_audio)
+                    
+                    # Evaluate quality using classifier
+                    if classifier_model is not None:
+                        features_batch = features[np.newaxis, ..., np.newaxis]
+                        pred = classifier_model.predict(features_batch, verbose=0)
+                        confidence = np.max(pred)
+                        correct = (np.argmax(pred) == labels[idx])
+                        score = confidence if correct else (1.0 - confidence)
+                    else:
+                        # Fallback: use SNR improvement as proxy
+                        snr_original = 10 * np.log10(np.mean(audio**2) / (np.var(audio[:1000]) + 1e-10))
+                        snr_processed = 10 * np.log10(np.mean(processed_audio**2) / (np.var(processed_audio[:1000]) + 1e-10))
+                        score = max(0, (snr_processed - snr_original) / 10.0)  # Normalize
+                    
+                    method_scores.append(score)
+                except:
+                    method_scores.append(0.0)
+            
+            # Best method = highest score
+            best_method = np.argmax(method_scores)
+            
+            X_routing.append(routing_features)
+            y_routing.append(best_method)
+            
+        except Exception as e:
+            continue
+    
+    X_routing = np.array(X_routing)
+    y_routing = to_categorical(np.array(y_routing), num_classes=n_methods)
+    
+    print(f"✓ Generated {len(X_routing)} training samples for routing model")
+    return X_routing, y_routing
+
+
+def train_routing_model(audio_batch, labels, n_samples=500, classifier_model=None, epochs=20):
+    """Train the preprocessing routing model"""
+    global ROUTING_MODEL
+    
+    # Generate training data
+    X_train, y_train = generate_routing_training_data(
+        audio_batch, labels, n_samples, classifier_model
+    )
+    
+    if len(X_train) == 0:
+        print("ERROR: No training data generated. Cannot train routing model.")
+        return None
+    
+    # Create model
+    ROUTING_MODEL = create_routing_model(input_dim=X_train.shape[1], n_methods=y_train.shape[1])
+    
+    # Train
+    print("\nTraining routing neural network...")
+    history = ROUTING_MODEL.fit(
+        X_train, y_train,
+        epochs=epochs,
+        batch_size=32,
+        validation_split=0.2,
+        verbose=1
+    )
+    
+    print(f"\n✓ Routing model training complete. Final accuracy: {history.history['accuracy'][-1]:.3f}")
+    
+    return ROUTING_MODEL
+
+
+def adaptive_pipeline_model_based(audio_batch):
+    """
+    MODEL-BASED adaptive preprocessing pipeline using meta-learning.
+    Replaces rule-based routing with neural network trained on performance data.
+    """
+    global ROUTING_MODEL
+    
+    X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    
+    method_stats = {name: 0 for name in METHOD_ID_TO_NAME.values()}
+    
+    # Fallback to granular if model not trained
+    if ROUTING_MODEL is None:
+        print("  WARNING: Routing model not trained. Using rule-based fallback.")
+        return adaptive_pipeline_granular(audio_batch)
+    
+    for audio in audio_batch:
+        try:
+            # Extract routing features
+            routing_features = extract_audio_features_for_routing(audio)
+            
+            # Predict best preprocessing method
+            routing_features_batch = routing_features[np.newaxis, :]
+            predictions = ROUTING_MODEL.predict(routing_features_batch, verbose=0)
+            method_id = np.argmax(predictions[0])
+            confidence = predictions[0][method_id]
+            
+            # Apply preprocessing (with confidence threshold)
+            if confidence > 0.3:  # Use model prediction if confident
+                processed_audio = apply_preprocessing_method(audio, method_id)
+                method_name = METHOD_ID_TO_NAME[method_id]
+            else:  # Fallback to no preprocessing if uncertain
+                processed_audio = audio
+                method_name = 'none'
+            
+            method_stats[method_name] += 1
+            
+            # Extract features
+            features = feature_func(processed_audio)
+            X.append(features)
+            
+        except Exception as e:
+            # On error, use original audio
+            features = feature_func(audio)
+            X.append(features)
+            method_stats['none'] += 1
+    
+    print(f'  Model-based preprocessing applied:')
+    for method, count in method_stats.items():
+        if count > 0:
+            pct = (count / len(audio_batch)) * 100
+            print(f'    {method:25s}: {count:4d} samples ({pct:5.1f}%)')
+    
+    return np.array(X)[..., np.newaxis], method_stats
+
+
+# ======================== END MODEL-BASED ROUTING ====================
+
+
+def adaptive_pipeline_granular(audio_batch):
+    X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    
+    method_stats = {
+        'no_preprocessing': 0,
+        'spectral_gating_only': 0,
+        'hpss_only': 0,
+        'hpss_and_gating': 0,
+        'wiener_only': 0,
+        'spectral_subtraction': 0
+    }
+    
+    for audio in audio_batch:
+        # Analyze audio characteristics
+        sf = librosa.feature.spectral_flatness(y=audio[:SR*5], n_fft=N_FFT, hop_length=HOP_LENGTH)
+        mean_sf = float(np.mean(sf))
+        
+        # Estimate SNR
+        signal_power = np.mean(audio**2)
+        noise_estimate = np.std(audio[:1000])
+        snr_db = 10 * np.log10(signal_power / (noise_estimate**2 + 1e-10))
+        
+        # Quick harmonic ratio
+        try:
+            harmonic, percussive = librosa.effects.hpss(audio[:SR*5], margin=3.0)
+            harmonic_energy = np.sum(harmonic**2)
+            total_energy = np.sum(audio[:SR*5]**2)
+            harmonic_ratio = harmonic_energy / (total_energy + 1e-8)
+        except:
+            harmonic_ratio = 0.5  # Neutral if error
+        
+        processed_audio = audio.copy()
+        
+        if snr_db > 25 and mean_sf < 0.4:
+            method_stats['no_preprocessing'] += 1
+            
+        elif mean_sf > 0.7 and snr_db < 15:
+            processed_audio = denoise_spectral_subtraction_gentle(audio)
+            method_stats['spectral_subtraction'] += 1
+            
+        elif mean_sf > 0.6:
+            processed_audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.1)
+            method_stats['spectral_gating_only'] += 1
+            
+        elif harmonic_ratio > 0.75 and mean_sf < 0.4:
+            harmonic, _ = librosa.effects.hpss(audio, margin=3.0)
+            processed_audio = harmonic
+            method_stats['hpss_only'] += 1
+            
+        elif harmonic_ratio > 0.65 and mean_sf > 0.5:
+            # Harmonics + noise = HPSS then gating
+            harmonic, _ = librosa.effects.hpss(audio, margin=3.0)
+            processed_audio = denoise_spectral_gating(harmonic, threshold_db=-35, alpha=0.1)
+            method_stats['hpss_and_gating'] += 1
+            
+        else:
+            # General case = Gentle Wiener filter (safe, minimal)
+            processed_audio = denoise_wiener_filter_gentle(audio)
+            method_stats['wiener_only'] += 1
+        
+        features = feature_func(processed_audio)
+        X.append(features)
+    
+    print(f'  Granular preprocessing applied:')
+    for method, count in method_stats.items():
+        if count > 0:
+            pct = (count / len(audio_batch)) * 100
+            print(f'    {method:25s}: {count:4d} samples ({pct:5.1f}%)')
+    
+    return np.array(X)[..., np.newaxis], method_stats
+
+
+def adaptive_pipeline_hpss(audio_batch):
+    X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    
     routing_stats = {
         'broadband_noise': 0,
         'harmonic_rich': 0,
@@ -445,36 +1034,617 @@ def adaptive_pipeline(audio_batch):
         audio_type = characterize_audio_type(audio)
         routing_stats[audio_type] += 1
         
-        # Route to appropriate method (lightweight version)
+        # Route to appropriate method (aggressive preprocessing)
         if audio_type == 'broadband_noise':
             audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.1)
         elif audio_type == 'harmonic_rich':
-            harmonic, percussive = librosa.effects.hpss(audio)
-            audio = harmonic + percussive  # Recombine
+            harmonic, percussive = librosa.effects.hpss(audio, margin=3.0)
+            audio = harmonic  # Keep only harmonic (removes percussion!)
         elif audio_type == 'vocal_heavy':
-            # Use spectral gating instead of Spleeter (lighter)
             audio = denoise_spectral_gating(audio, threshold_db=-35, alpha=0.15)
         else:  # general
-            # Use spectral gating instead of Demucs (lighter)
             audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.1)
         
-        # Apply LUFS normalization
-        audio = normalize_lufs(audio, target_lufs=TARGET_LUFS, sr=SR)
+        features = feature_func(audio)
+        X.append(features)
+    
+    print(f'  HPSS Pipeline routing: Broadband={routing_stats["broadband_noise"]}, '
+          f'Harmonic={routing_stats["harmonic_rich"]}, '
+          f'Vocal={routing_stats["vocal_heavy"]}, '
+          f'General={routing_stats["general"]}')
+    
+    return np.array(X)[..., np.newaxis], routing_stats
+
+
+# Legacy alias for backward compatibility
+adaptive_pipeline = adaptive_pipeline_hpss
+
+
+# ==================== GENTLE PREPROCESSING ====================
+def denoise_spectral_subtraction_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
+    """Gentle spectral subtraction"""
+    stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+    mag, phase = np.abs(stft), np.angle(stft)
+    
+    noise_profile = np.median(mag[:, :10], axis=1, keepdims=True)
+    mag_clean = np.maximum(mag - 0.5 * noise_profile, 0.0)  # 50% noise reduction
+    
+    stft_clean = mag_clean * np.exp(1j * phase)
+    audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
+    return audio_clean
+
+
+def denoise_median_filtering_gentle(audio, kernel_size=5):
+    """Gentle median filtering"""
+    # Convert to mel-spectrogram
+    mel = librosa.feature.melspectrogram(y=audio, sr=SR, n_mels=N_MELS, n_fft=N_FFT)
+    mel_db = librosa.power_to_db(mel, ref=np.max)
+    
+    # Apply gentle median filter
+    mel_filtered = medfilt2d(mel_db, kernel_size=kernel_size)
+    
+    # Blend 60% filtered + 40% original (preserve musical content)
+    mel_blended = 0.6 * mel_filtered + 0.4 * mel_db
+    
+    # Convert back (approximate)
+    mel_power = librosa.db_to_power(mel_blended)
+    audio_clean = librosa.feature.inverse.mel_to_audio(mel_power, sr=SR, n_fft=N_FFT, hop_length=HOP_LENGTH)
+    
+    if len(audio_clean) > len(audio):
+        audio_clean = audio_clean[:len(audio)]
+    elif len(audio_clean) < len(audio):
+        audio_clean = np.pad(audio_clean, (0, len(audio) - len(audio_clean)))
+    
+    return audio_clean
+
+
+def denoise_wiener_filter_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
+    """Gentle Wiener filter"""
+    stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+    mag, phase = np.abs(stft), np.angle(stft)
+    
+    noise_profile = np.median(mag[:, :10], axis=1, keepdims=True)
+    signal_power = mag ** 2
+    noise_power = noise_profile ** 2
+    
+    # Gentle Wiener gain with floor at 0.5 (preserve 50% minimum)
+    wiener_gain = signal_power / (signal_power + noise_power + 1e-8)
+    wiener_gain = np.maximum(wiener_gain, 0.5)
+    
+    mag_clean = mag * wiener_gain
+    
+    stft_clean = mag_clean * np.exp(1j * phase)
+    audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
+    return audio_clean
+
+
+# ======================== ADVANCED PREPROCESSING TECHNIQUES ============
+
+def denoise_wavelet(audio, wavelet='db4', level=4, threshold_scale=0.5):
+    """
+    ADVANCED: Wavelet-based denoising using discrete wavelet transform.
+    Preserves transients better than STFT-based methods.
+    
+    Args:
+        audio: Input audio signal
+        wavelet: Wavelet type ('db4', 'sym4', 'coif1')
+        level: Decomposition level
+        threshold_scale: Threshold multiplier (lower = more aggressive)
+    
+    Returns:
+        Denoised audio
+    """
+    if not PYWT_AVAILABLE:
+        return audio  # Fallback to original if pywt not available
+    
+    try:
+        # Decompose signal
+        coeffs = pywt.wavedec(audio, wavelet, level=level)
         
-        mel = audio_to_mel(audio)
-        X.append(mel)
+        # Calculate threshold using MAD (Median Absolute Deviation)
+        sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+        threshold = sigma * np.sqrt(2 * np.log(len(audio))) * threshold_scale
+        
+        # Apply soft thresholding to detail coefficients
+        coeffs_thresh = [coeffs[0]]  # Keep approximation coefficients
+        for detail_coeff in coeffs[1:]:
+            coeffs_thresh.append(pywt.threshold(detail_coeff, threshold, mode='soft'))
+        
+        # Reconstruct signal
+        audio_clean = pywt.waverec(coeffs_thresh, wavelet)
+        
+        # Match length
+        if len(audio_clean) > len(audio):
+            audio_clean = audio_clean[:len(audio)]
+        elif len(audio_clean) < len(audio):
+            audio_clean = np.pad(audio_clean, (0, len(audio) - len(audio_clean)))
+        
+        return audio_clean
+    except:
+        return audio  # Return original on error
+
+
+def denoise_non_local_means(audio, patch_size=512, search_window=2048, h=0.1):
+    """
+    ADVANCED: Non-local means denoising - exploits self-similarity in audio.
+    Particularly effective for structured/musical content.
     
-    print(f'  Routing: Broadband={routing_stats["broadband_noise"]}, '
-          f'Harmonic={routing_stats["harmonic_rich"]}, '
-          f'Vocal={routing_stats["vocal_heavy"]}, '
-          f'General={routing_stats["general"]}')
+    Args:
+        audio: Input audio signal
+        patch_size: Size of comparison patches
+        search_window: Size of search region
+        h: Filtering parameter (lower = more denoising)
     
-    print(f'  Routing: Broadband={routing_stats["broadband_noise"]}, '
-          f'Harmonic={routing_stats["harmonic_rich"]}, '
-          f'Vocal={routing_stats["vocal_heavy"]}, '
-          f'General={routing_stats["general"]}')
+    Returns:
+        Denoised audio
+    """
+    try:
+        audio_clean = np.zeros_like(audio)
+        weights_sum = np.zeros_like(audio)
+        
+        n = len(audio)
+        half_patch = patch_size // 2
+        half_search = search_window // 2
+        
+        # Process each position (downsampled for efficiency)
+        stride = patch_size // 4
+        for i in range(half_patch, n - half_patch, stride):
+            # Extract reference patch
+            ref_patch = audio[i - half_patch:i + half_patch]
+            
+            # Search window bounds
+            search_start = max(half_patch, i - half_search)
+            search_end = min(n - half_patch, i + half_search)
+            
+            # Compare with patches in search window
+            for j in range(search_start, search_end, stride):
+                # Extract comparison patch
+                comp_patch = audio[j - half_patch:j + half_patch]
+                
+                # Calculate patch distance
+                distance = np.sum((ref_patch - comp_patch) ** 2) / patch_size
+                
+                # Calculate weight using Gaussian kernel
+                weight = np.exp(-distance / (h ** 2))
+                
+                # Accumulate weighted patches
+                audio_clean[i] += weight * audio[j]
+                weights_sum[i] += weight
+        
+        # Normalize
+        mask = weights_sum > 0
+        audio_clean[mask] /= weights_sum[mask]
+        
+        # Fill gaps with original values
+        audio_clean[~mask] = audio[~mask]
+        
+        return audio_clean
+    except:
+        return audio  # Return original on error
+
+
+def denoise_adaptive_wiener(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
+    """
+    ADVANCED: Adaptive Wiener filter with time-varying noise estimation.
+    More sophisticated than standard Wiener filtering.
     
-    return np.array(X)[..., np.newaxis]
+    Args:
+        audio: Input audio signal
+        n_fft: FFT size
+        hop_length: Hop length
+    
+    Returns:
+        Denoised audio
+    """
+    try:
+        stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+        mag, phase = np.abs(stft), np.angle(stft)
+        
+        # Adaptive noise estimation using minimum statistics
+        noise_profile = np.ones_like(mag) * np.inf
+        window_size = 10
+        
+        for i in range(mag.shape[1]):
+            start = max(0, i - window_size)
+            end = min(mag.shape[1], i + window_size)
+            noise_profile[:, i] = np.min(mag[:, start:end], axis=1)
+        
+        # Time-varying signal and noise power
+        signal_power = mag ** 2
+        noise_power = noise_profile ** 2
+        
+        # Adaptive Wiener gain with frequency-dependent floor
+        freq_bins = np.arange(mag.shape[0]) / mag.shape[0]
+        min_gain = 0.3 + 0.4 * freq_bins.reshape(-1, 1)  # Higher floor for low freq
+        
+        wiener_gain = signal_power / (signal_power + noise_power + 1e-8)
+        wiener_gain = np.maximum(wiener_gain, min_gain)
+        
+        # Apply gain
+        mag_clean = mag * wiener_gain
+        
+        # Reconstruct
+        stft_clean = mag_clean * np.exp(1j * phase)
+        audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
+        
+        return audio_clean
+    except:
+        return audio
+
+
+def denoise_multiband_spectral_subtraction(audio, n_fft=N_FFT, hop_length=HOP_LENGTH, n_bands=4):
+    """
+    ADVANCED: Multi-band spectral subtraction with band-specific parameters.
+    Reduces musical noise artifacts common in standard spectral subtraction.
+    
+    Args:
+        audio: Input audio signal
+        n_fft: FFT size
+        hop_length: Hop length
+        n_bands: Number of frequency bands
+    
+    Returns:
+        Denoised audio
+    """
+    try:
+        stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+        mag, phase = np.abs(stft), np.angle(stft)
+        
+        # Estimate noise from initial frames
+        noise_profile = np.mean(mag[:, :10], axis=1)
+        
+        # Divide spectrum into bands
+        n_freq_bins = mag.shape[0]
+        band_size = n_freq_bins // n_bands
+        
+        mag_clean = np.zeros_like(mag)
+        
+        for band_idx in range(n_bands):
+            start_bin = band_idx * band_size
+            end_bin = (band_idx + 1) * band_size if band_idx < n_bands - 1 else n_freq_bins
+            
+            # Band-specific parameters (more conservative for low frequencies)
+            alpha = 2.0 - 0.3 * band_idx  # Oversubtraction factor
+            beta = 0.01 * (band_idx + 1)  # Spectral floor
+            
+            # Extract band
+            mag_band = mag[start_bin:end_bin, :]
+            noise_band = noise_profile[start_bin:end_bin].reshape(-1, 1)
+            
+            # Spectral subtraction
+            mag_band_clean = mag_band - alpha * noise_band
+            mag_band_clean = np.maximum(mag_band_clean, beta * mag_band)
+            
+            mag_clean[start_bin:end_bin, :] = mag_band_clean
+        
+        # Reconstruct
+        stft_clean = mag_clean * np.exp(1j * phase)
+        audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
+        
+        return audio_clean
+    except:
+        return audio
+
+
+def denoise_temporal_smoothing(audio, window_size=5):
+    """
+    ADVANCED: Temporal smoothing using moving average in time domain.
+    Gentle approach that preserves overall characteristics.
+    
+    Args:
+        audio: Input audio signal
+        window_size: Smoothing window size (odd number)
+    
+    Returns:
+        Smoothed audio
+    """
+    try:
+        # Ensure window size is odd
+        if window_size % 2 == 0:
+            window_size += 1
+        
+        # Apply uniform filter (moving average)
+        audio_clean = uniform_filter(audio, size=window_size, mode='nearest')
+        
+        # Preserve energy
+        energy_ratio = np.sqrt(np.mean(audio ** 2) / (np.mean(audio_clean ** 2) + 1e-10))
+        audio_clean *= energy_ratio
+        
+        return audio_clean
+    except:
+        return audio
+
+
+# ======================== END ADVANCED PREPROCESSING ====================
+
+
+def characterize_noise_type_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
+    """Conservative noise characterization"""
+    sf = librosa.feature.spectral_flatness(y=audio, n_fft=n_fft, hop_length=hop_length)
+    mean_sf = float(np.mean(sf))
+    
+    sc = librosa.feature.spectral_centroid(y=audio, sr=SR, n_fft=n_fft, hop_length=hop_length)
+    mean_sc = float(np.mean(sc))
+    
+    zcr = librosa.feature.zero_crossing_rate(y=audio, hop_length=hop_length)
+    mean_zcr = float(np.mean(zcr))
+    
+    # Conservative thresholds
+    if mean_sf > 0.75:
+        return 'broadband'
+    elif mean_sc < 1500:
+        return 'lowfreq'
+    elif mean_zcr > 0.20:
+        return 'transient'
+    else:
+        return 'general'
+
+
+def adaptive_pipeline_gentle(audio_batch):
+    X = []
+    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
+    noise_stats = {'broadband': 0, 'lowfreq': 0, 'transient': 0, 'general': 0}
+    
+    for audio in audio_batch:
+        noise_type = characterize_noise_type_gentle(audio)
+        noise_stats[noise_type] += 1
+        
+        if noise_type == 'broadband':
+            audio_clean = denoise_spectral_subtraction_gentle(audio)
+        elif noise_type in ['lowfreq', 'transient']:
+            audio_clean = denoise_median_filtering_gentle(audio)
+        else:  # general
+            audio_clean = denoise_wiener_filter_gentle(audio)
+        
+        features = feature_func(audio_clean)
+        X.append(features)
+    
+    print(f'  Gentle preprocessing: Broadband={noise_stats["broadband"]}, '
+          f'LowFreq={noise_stats["lowfreq"]}, Transient={noise_stats["transient"]}, '
+          f'General={noise_stats["general"]}')
+    
+    return np.array(X)[..., np.newaxis], noise_stats
+
+
+# ==================== DATASET-LEVEL NOISE ANALYSIS ====================
+def analyze_dataset_noise(audio_batch, sample_size=8000):
+    print(f'\nAnalyzing dataset characteristics ({sample_size} samples)...')
+    
+    # Limit to sample_size
+    sample_audio = audio_batch[:sample_size] if len(audio_batch) > sample_size else audio_batch
+    
+    # Metrics for GRANULAR method
+    snr_values = []
+    spectral_flatness_values = []
+    harmonic_ratio_values = []
+    
+    # Metrics for INTELLIGENT method
+    quality_scores = []
+    
+    # Predicted routing for GRANULAR method
+    granular_routing = {
+        'no_preprocessing': 0,
+        'spectral_gating_only': 0,
+        'hpss_only': 0,
+        'hpss_and_gating': 0,
+        'wiener_only': 0,
+        'spectral_subtraction': 0
+    }
+    
+    # Predicted routing for INTELLIGENT method
+    intelligent_routing = {
+        'skipped_high_quality': 0,
+        'very_light_denoising': 0,
+        'light_denoising': 0,
+        'moderate_denoising': 0
+    }
+    
+    print('Analyzing audio characteristics...')
+    for i, audio in enumerate(sample_audio):
+        try:
+            analysis_length = min(len(audio), SR*5)
+            
+            sf = librosa.feature.spectral_flatness(y=audio[:analysis_length], n_fft=N_FFT, hop_length=HOP_LENGTH)
+            mean_sf = float(np.mean(sf))
+            spectral_flatness_values.append(mean_sf)
+            
+            signal_power = np.mean(audio**2)
+            noise_sample_size = min(1000, len(audio) // 2)
+            noise_estimate = np.std(audio[:noise_sample_size])
+            
+            if signal_power < 1e-10 or noise_estimate < 1e-10:
+                snr_db = 20.0
+            else:
+                snr_db = 10 * np.log10(signal_power / (noise_estimate**2 + 1e-10))
+                snr_db = np.clip(snr_db, -20, 60)
+            
+            snr_values.append(snr_db)
+            
+            # 3. Harmonic ratio
+            try:
+                harmonic, percussive = librosa.effects.hpss(audio[:analysis_length], margin=3.0)
+                harmonic_energy = np.sum(harmonic**2)
+                total_energy = np.sum(audio[:analysis_length]**2)
+                harmonic_ratio = harmonic_energy / (total_energy + 1e-8)
+            except:
+                harmonic_ratio = 0.5
+            harmonic_ratio_values.append(harmonic_ratio)
+        except Exception as e:
+            # Skip problematic samples, use neutral values
+            spectral_flatness_values.append(0.5)
+            snr_values.append(20.0)
+            harmonic_ratio_values.append(0.5)
+            mean_sf = 0.5
+            snr_db = 20.0
+            harmonic_ratio = 0.5
+            print(f'  Warning: Skipped sample {i} due to error: {str(e)[:50]}')
+        
+        # Predict GRANULAR routing (match granular pipeline logic)
+        if snr_db > 25 and mean_sf < 0.4:
+            granular_routing['no_preprocessing'] += 1
+        elif mean_sf > 0.7 and snr_db < 15:
+            granular_routing['spectral_subtraction'] += 1
+        elif mean_sf > 0.6:
+            granular_routing['spectral_gating_only'] += 1
+        elif harmonic_ratio > 0.75 and mean_sf < 0.4:
+            granular_routing['hpss_only'] += 1
+        elif harmonic_ratio > 0.65 and mean_sf > 0.5:
+            granular_routing['hpss_and_gating'] += 1
+        else:
+            granular_routing['wiener_only'] += 1
+        
+        # === INTELLIGENT METHOD ANALYSIS ===
+        try:
+            quality_score, needs_preprocessing, recommendation = assess_audio_quality(audio)
+            quality_scores.append(quality_score)
+            
+            # Predict INTELLIGENT routing
+            if recommendation == 'skip':
+                intelligent_routing['skipped_high_quality'] += 1
+            elif recommendation == 'very_light':
+                intelligent_routing['very_light_denoising'] += 1
+            elif recommendation == 'light':
+                intelligent_routing['light_denoising'] += 1
+            else:
+                intelligent_routing['moderate_denoising'] += 1
+        except Exception as e:
+            # Default to moderate quality if error
+            quality_scores.append(50.0)
+            intelligent_routing['light_denoising'] += 1
+        
+        if (i + 1) % 100 == 0:
+            print(f'  Analyzed {i + 1}/{len(sample_audio)} samples...')
+    
+    total = len(sample_audio)
+    
+    print('\n' + '='*70)
+    print('DATASET ANALYSIS FOR GRANULAR & INTELLIGENT METHODS')
+    print('='*70)
+    
+    # GRANULAR METHOD ANALYSIS
+    print('\n[GRANULAR METHOD] Audio Quality Metrics:')
+    print(f'  SNR (Signal-to-Noise Ratio):')
+    print(f'    Mean: {np.mean(snr_values):6.2f} dB  |  Median: {np.median(snr_values):6.2f} dB')
+    print(f'    Range: {np.min(snr_values):6.2f} to {np.max(snr_values):6.2f} dB')
+    
+    print(f'  Spectral Flatness (0=tonal, 1=noisy):')
+    print(f'    Mean: {np.mean(spectral_flatness_values):.3f}  |  Median: {np.median(spectral_flatness_values):.3f}')
+    print(f'    Range: {np.min(spectral_flatness_values):.3f} to {np.max(spectral_flatness_values):.3f}')
+    
+    print(f'  Harmonic Ratio (0=noise, 1=pure harmonic):')
+    print(f'    Mean: {np.mean(harmonic_ratio_values):.3f}  |  Median: {np.median(harmonic_ratio_values):.3f}')
+    print(f'    Range: {np.min(harmonic_ratio_values):.3f} to {np.max(harmonic_ratio_values):.3f}')
+    
+    print('\n[GRANULAR METHOD] Predicted Preprocessing Routes:')
+    for method, count in granular_routing.items():
+        pct = (count / total) * 100
+        bar = '█' * int(pct / 2)
+        print(f'  {method:25s}: {count:4d} samples ({pct:5.1f}%) {bar}')
+    
+    # INTELLIGENT METHOD ANALYSIS
+    print('\n[INTELLIGENT METHOD] Quality Score Distribution:')
+    print(f'  Mean Quality: {np.mean(quality_scores):6.2f}/100  |  Median: {np.median(quality_scores):6.2f}/100')
+    print(f'  Range: {np.min(quality_scores):6.2f} to {np.max(quality_scores):6.2f}')
+    
+    # Quality distribution bins
+    excellent = sum(1 for q in quality_scores if q >= 75)
+    good = sum(1 for q in quality_scores if 60 <= q < 75)
+    fair = sum(1 for q in quality_scores if 40 <= q < 60)
+    poor = sum(1 for q in quality_scores if q < 40)
+    
+    print(f'  Excellent (≥75): {excellent:4d} ({excellent/total*100:5.1f}%)')
+    print(f'  Good (60-75):    {good:4d} ({good/total*100:5.1f}%)')
+    print(f'  Fair (40-60):    {fair:4d} ({fair/total*100:5.1f}%)')
+    print(f'  Poor (<40):      {poor:4d} ({poor/total*100:5.1f}%)')
+    
+    print('\n[INTELLIGENT METHOD] Predicted Preprocessing Routes:')
+    for method, count in intelligent_routing.items():
+        pct = (count / total) * 100
+        bar = '█' * int(pct / 2)
+        print(f'  {method:25s}: {count:4d} samples ({pct:5.1f}%) {bar}')
+    
+    print('\n' + '='*70)
+    
+    return {
+        'total_analyzed': total,
+        'granular_metrics': {
+            'snr_mean': np.mean(snr_values),
+            'snr_median': np.median(snr_values),
+            'sf_mean': np.mean(spectral_flatness_values),
+            'sf_median': np.median(spectral_flatness_values),
+            'hr_mean': np.mean(harmonic_ratio_values),
+            'hr_median': np.median(harmonic_ratio_values),
+            'routing': granular_routing
+        },
+        'intelligent_metrics': {
+            'quality_mean': np.mean(quality_scores),
+            'quality_median': np.median(quality_scores),
+            'excellent_pct': excellent/total*100,
+            'good_pct': good/total*100,
+            'fair_pct': fair/total*100,
+            'poor_pct': poor/total*100,
+            'routing': intelligent_routing
+        }
+    }
+
+
+def calculate_preprocessing_scores(dataset_analysis):
+    granular_metrics = dataset_analysis['granular_metrics']
+    intelligent_metrics = dataset_analysis['intelligent_metrics']
+    
+    # Score GRANULAR method (best for diverse/noisy datasets)
+    # Higher score when: varied SNR, varied spectral flatness, needs different preprocessing per sample
+    snr_mean = granular_metrics['snr_mean']
+    sf_mean = granular_metrics['sf_mean']
+    routing = granular_metrics['routing']
+    total = dataset_analysis['total_analyzed']
+    
+    # How diverse is the preprocessing needed?
+    preprocessing_diversity = sum(1 for count in routing.values() if count > total * 0.05)
+    no_preprocessing_pct = routing['no_preprocessing'] / total * 100
+    
+    granular_score = 0
+    granular_score += (100 - no_preprocessing_pct) * 0.4  # Higher if samples need preprocessing
+    granular_score += preprocessing_diversity * 10         # Higher if diverse preprocessing needed
+    granular_score += (sf_mean * 100) * 0.3               # Higher if noisy (high spectral flatness)
+    granular_score += max(0, (25 - snr_mean)) * 2         # Higher if low SNR
+    
+    
+    quality_mean = intelligent_metrics['quality_mean']
+    excellent_pct = intelligent_metrics['excellent_pct']
+    skip_pct = intelligent_metrics['routing']['skipped_high_quality'] / total * 100
+    
+    intelligent_score = 0
+    intelligent_score += quality_mean * 0.5               # Higher if high average quality
+    intelligent_score += excellent_pct * 0.8              # Higher if many excellent samples
+    intelligent_score += skip_pct * 0.6                   # Higher if most can skip preprocessing
+    
+    # Recommendation
+    if intelligent_score > granular_score:
+        recommendation = 'intelligent'
+        confidence = (intelligent_score - granular_score) / max(intelligent_score, granular_score)
+    else:
+        recommendation = 'granular'
+        confidence = (granular_score - intelligent_score) / max(intelligent_score, granular_score)
+    
+    # Override if scores are close (within 10 points)
+    if abs(granular_score - intelligent_score) < 10:
+        recommendation = 'granular'
+        confidence = 0.5
+    
+    return {
+        'granular_score': granular_score,
+        'intelligent_score': intelligent_score,
+        'recommendation': recommendation,
+        'confidence': confidence,
+        'reasoning': {
+            'snr_mean': snr_mean,
+            'quality_mean': quality_mean,
+            'preprocessing_diversity': preprocessing_diversity,
+            'no_preprocessing_pct': no_preprocessing_pct,
+            'excellent_quality_pct': excellent_pct
+        }
+    }
 
 
 def spectral_gating_pipeline(audio_batch):
@@ -533,7 +1703,6 @@ def lufs_only_pipeline(audio_batch):
 
 # ======================== MODEL ARCHITECTURE ==========================
 def build_genre_cnn(input_shape, num_classes):
-    """CNN architecture (same as Week 1-2)."""
     model = keras.Sequential([
         layers.Input(shape=input_shape),
         
@@ -569,9 +1738,70 @@ def build_genre_cnn(input_shape, num_classes):
     return model
 
 
+# ======================== SILENT NOISE ADDITION ======================
+def _generate_realistic_noise_silent(duration, sr=SR):
+    samples = int(duration * sr)
+    
+    # Pink noise base
+    white = np.random.randn(samples)
+    freqs = np.fft.rfftfreq(samples, 1/sr)
+    freqs[0] = 1
+    pink_filter = 1 / np.sqrt(freqs)
+    pink_fft = np.fft.rfft(white) * pink_filter
+    pink = np.fft.irfft(pink_fft, n=samples)
+    pink = pink / np.std(pink) * 0.6
+    
+    # High-frequency hiss
+    hiss = np.random.normal(0, 1, samples)
+    b, a = signal.butter(2, 4000 / (sr/2), btype='high')
+    hiss = signal.filtfilt(b, a, hiss) * 0.3
+    
+    # Low-frequency rumble
+    rumble_white = np.random.randn(samples)
+    rumble_freqs = np.fft.rfftfreq(samples, 1/sr)
+    rumble_freqs[0] = 1
+    rumble_filter = 1 / rumble_freqs
+    rumble_fft = np.fft.rfft(rumble_white) * rumble_filter
+    rumble = np.fft.irfft(rumble_fft, n=samples)
+    b, a = signal.butter(2, 200 / (sr/2), btype='low')
+    rumble = signal.filtfilt(b, a, rumble) * 0.4
+    
+    # Combine
+    noise = pink + hiss + rumble
+    noise = noise / np.std(noise)
+    return noise
+
+
+def _add_noise_at_snr_silent(audio, target_snr_db=15):
+    signal_power = np.mean(audio ** 2)
+    
+    if signal_power < 1e-10:
+        return audio
+    
+    duration = len(audio) / SR
+    noise = _generate_realistic_noise_silent(duration, SR)
+    
+    noise_power = np.mean(noise ** 2)
+    
+    if noise_power < 1e-10:
+        return audio
+    
+    target_noise_power = signal_power / (10 ** (target_snr_db / 10))
+    noise_scaled = noise * np.sqrt(target_noise_power / (noise_power + 1e-10))
+    
+    # Add noise
+    noisy_audio = audio + noise_scaled
+    
+    # Prevent clipping
+    max_val = np.max(np.abs(noisy_audio))
+    if max_val > 0.99:
+        noisy_audio = noisy_audio * 0.99 / max_val
+    
+    return noisy_audio
+
+
 # ======================== DATASET LOADING =============================
 def load_fma_dataset(max_samples=None):
-    """Load FMA audio files with genre labels."""
     print('Loading FMA metadata...')
     tracks = pd.read_csv(FMA_METADATA, index_col=0, header=[0, 1])
     genre_col = ('track', 'genre_top')
@@ -599,6 +1829,18 @@ def load_fma_dataset(max_samples=None):
                 continue
             
             audio, sr = librosa.load(filepath, sr=SR, duration=DURATION, mono=True)
+            
+            if len(audio) < SR * 5:
+                skipped += 1
+                continue
+            
+            signal_power = np.mean(audio ** 2)
+            if signal_power < 1e-8:
+                skipped += 1
+                continue
+            
+            # audio = _add_noise_at_snr_silent(audio, target_snr_db=15)
+            
             X.append(audio)
             y.append(genre)
             
@@ -620,13 +1862,16 @@ def load_fma_dataset(max_samples=None):
 
 
 # ======================== EXPERIMENT ==================================
-def run_comparative_experiment():
-    """Compare all preprocessing methods."""
+def run_comparative_experiment(use_model_based_routing=False, train_routing_model_flag=False):
     print('='*70)
-    print('ADVANCED PREPROCESSING POC - Week 4-5')
+    print('ADAPTIVE PREPROCESSING FOR MUSIC GENRE CLASSIFICATION')
     print('='*70)
     
-    # Load dataset
+    # ========== STEP 1: LOAD DATASET ==========
+    print('\n' + '='*70)
+    print('STEP 1: LOAD DATASET')
+    print('='*70)
+    
     X_audio, y, genres = load_fma_dataset(max_samples=MAX_SAMPLES)
     print(f'\nGenres: {genres}')
     print(f'Total samples: {len(X_audio)}')
@@ -638,192 +1883,248 @@ def run_comparative_experiment():
     
     print(f'Train: {len(X_train_audio)}, Test: {len(X_test_audio)}')
     
-    # Dictionary to store results
-    results = {}
-    
-    # Define experiments
-    experiments = [
-        ('Baseline (No Preprocessing)', baseline_pipeline),
-        ('Spectral Gating + LUFS', spectral_gating_pipeline),
-        ('HPSS + LUFS', hpss_pipeline),
-        ('Adaptive (Smart Routing)', adaptive_pipeline),  # Now enabled with lightweight version
-        # ('Demucs ML + LUFS', demucs_pipeline),    # WARNING: Extremely slow (hours for 2000 samples)
-        # ('Spleeter + LUFS', spleeter_pipeline),  # Also slow
-    ]
-    
-    print(f'\nNOTE: Running {len(experiments)} experiments on {len(X_train_audio)} samples')
-    print('Adaptive pipeline uses lightweight routing (spectral gating + HPSS)')
-    print('Demucs and Spleeter are disabled for speed\n')
-    
-    input_shape = None
     num_classes = len(genres)
     
-    for exp_name, pipeline_func in experiments:
+    # ========== STEP 2: TRAIN BASELINE MODEL ==========
+    print('\n' + '='*70)
+    print('STEP 2: TRAIN BASELINE MODEL (No Preprocessing)')
+    print('='*70)
+    
+    print('Generating baseline features...')
+    X_train_baseline = baseline_pipeline(X_train_audio)
+    X_test_baseline = baseline_pipeline(X_test_audio)
+    
+    input_shape = X_train_baseline.shape[1:]
+    print(f'Input shape: {input_shape}')
+    
+    print('\nTraining baseline CNN...')
+    baseline_model = build_genre_cnn(input_shape, num_classes)
+    baseline_model.fit(
+        X_train_baseline, y_train,
+        validation_split=0.15,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        verbose=1
+    )
+    
+    print('\nEvaluating baseline model...')
+    y_pred_proba_baseline = baseline_model.predict(X_test_baseline, verbose=0)
+    preds_baseline = np.argmax(y_pred_proba_baseline, axis=1)
+    
+    baseline_metrics = calculate_comprehensive_metrics(y_test, preds_baseline, y_pred_proba_baseline, genres)
+    
+    print(f'\nBaseline Results:')
+    print(f'  Accuracy:     {baseline_metrics["accuracy"]:.4f} ({baseline_metrics["accuracy"]*100:.2f}%)')
+    print(f'  F1-Score:     {baseline_metrics["f1_macro"]:.4f}')
+    print(f'  AUC-ROC:      {baseline_metrics["auc_roc_macro"]:.4f}')
+    print(f'  Precision:    {baseline_metrics["precision_weighted"]:.4f}')
+    print(f'  Recall:       {baseline_metrics["recall_weighted"]:.4f}')
+    
+    # ========== STEP 2.5: ANALYZE DATASET NOISE ==========
+    print('\n' + '='*70)
+    print('STEP 2.5: DATASET-LEVEL NOISE ANALYSIS')
+    print('='*70)
+    
+    dataset_analysis = analyze_dataset_noise(X_train_audio, sample_size=8000)
+    
+    # ========== STEP 2.7: TRAIN ROUTING MODEL (if model-based) ==========
+    if use_model_based_routing and train_routing_model_flag:
         print('\n' + '='*70)
-        print(f'EXPERIMENT: {exp_name}')
+        print('STEP 2.7: TRAIN PREPROCESSING ROUTING MODEL')
         print('='*70)
         
-        try:
-            # Generate features
-            print('Generating features...')
-            X_train = pipeline_func(X_train_audio)
-            X_test = pipeline_func(X_test_audio)
-            
-            if input_shape is None:
-                input_shape = X_train.shape[1:]
-            
-            # Train model
-            model = build_genre_cnn(input_shape, num_classes)
-            model.fit(
-                X_train, y_train,
-                validation_split=0.15,
-                epochs=EPOCHS,
-                batch_size=BATCH_SIZE,
-                verbose=1
-            )
-            
-            # Evaluate with comprehensive metrics
-            y_pred_proba = model.predict(X_test, verbose=0)
-            preds = np.argmax(y_pred_proba, axis=1)
-            
-            metrics = calculate_comprehensive_metrics(y_test, preds, y_pred_proba, genres)
-            
-            results[exp_name] = metrics
-            results[exp_name]['predictions'] = preds
-            results[exp_name]['X_test'] = X_test  # Save for visualization
-            
-            print(f'\n{exp_name} Results:')
-            print(f'  Accuracy:        {metrics["accuracy"]:.4f} ({metrics["accuracy"]*100:.2f}%)')
-            print(f'  F1-Score (macro): {metrics["f1_macro"]:.4f}')
-            print(f'  AUC-ROC (macro):  {metrics["auc_roc_macro"]:.4f}')
-            print(f'  Precision (weighted): {metrics["precision_weighted"]:.4f}')
-            print(f'  Recall (weighted):    {metrics["recall_weighted"]:.4f}')
-            
-            # Save spectrogram visualizations (first 3 test samples)
-            if exp_name != 'Baseline (No Preprocessing)':
-                print(f'\n  Saving spectrograms for {exp_name}...')
-                for idx in range(min(3, len(X_test_audio))):
-                    # Process single audio for visualization
-                    audio_processed = pipeline_func([X_test_audio[idx]])[0, ..., 0]
-                    # Convert back from mel to approximate audio (for visualization only)
-                    save_spectrogram_comparison(
-                        X_test_audio[idx], 
-                        X_test_audio[idx],  # Use original for now (mel is already processed)
-                        exp_name.replace(' ', '_').replace('(', '').replace(')', ''),
-                        sample_idx=idx
-                    )
+        # Train routing model using audio arrays in memory (faster than loading from disk)
+        print(f"Using {len(X_train_audio)} training samples to train routing model...")
         
-        except Exception as e:
-            print(f'Error in {exp_name}: {e}')
-            import traceback
-            traceback.print_exc()
-            results[exp_name] = {'accuracy': 0.0, 'error': str(e)}
-    
-    # Summary
-    print('\n' + '='*70)
-    print('FINAL COMPARISON - ALL METRICS')
-    print('='*70)
-    
-    # Create results table
-    print(f'\n{"Method":<35} {"Accuracy":>8} {"F1-Macro":>10} {"AUC-ROC":>10} {"Precision":>10} {"Recall":>10}')
-    print('-' * 85)
-    
-    baseline_metrics = None
-    best_f1 = 0
-    best_method = None
-    
-    for exp_name, res in results.items():
-        if 'error' not in res:
-            print(f'{exp_name:<35} {res["accuracy"]:>7.2%} {res["f1_macro"]:>10.4f} '
-                  f'{res["auc_roc_macro"]:>10.4f} {res["precision_weighted"]:>10.4f} '
-                  f'{res["recall_weighted"]:>10.4f}')
-            
-            # Track baseline
-            if 'Baseline' in exp_name:
-                baseline_metrics = res
-            
-            # Track best
-            if res['f1_macro'] > best_f1:
-                best_f1 = res['f1_macro']
-                best_method = exp_name
+        # Train routing model with pre-trained baseline classifier
+        routing_model = train_routing_model(
+            X_train_audio,
+            y_train,
+            n_samples=min(500, len(X_train_audio)),
+            classifier_model=baseline_model,
+            epochs=15
+        )
+        
+        if routing_model is not None:
+            print('\n✓ Routing model trained successfully')
         else:
-            print(f'{exp_name:<35} ERROR: {res["error"]}')
+            print('\n⚠️ Routing model training failed. Will use rule-based fallback.')
     
-    # Check for >4% improvement requirement
+    # ========== STEP 3: TRAIN ADAPTIVE MODEL ==========
     print('\n' + '='*70)
-    print('REQUIREMENT VALIDATION')
+    print('STEP 3: TRAIN ADAPTIVE MODEL')
     print('='*70)
     
-    if baseline_metrics and best_method:
-        improvement_f1 = (results[best_method]['f1_macro'] - baseline_metrics['f1_macro']) * 100
-        improvement_acc = (results[best_method]['accuracy'] - baseline_metrics['accuracy']) * 100
-        improvement_auc = (results[best_method]['auc_roc_macro'] - baseline_metrics['auc_roc_macro']) * 100
-        
-        print(f'\n✓ Best Method: {best_method}')
-        print(f'  F1-Score:     {baseline_metrics["f1_macro"]:.4f} → {results[best_method]["f1_macro"]:.4f} '
-              f'({improvement_f1:+.2f}%)')
-        print(f'  Accuracy:     {baseline_metrics["accuracy"]:.4f} → {results[best_method]["accuracy"]:.4f} '
-              f'({improvement_acc:+.2f}%)')
-        print(f'  AUC-ROC:      {baseline_metrics["auc_roc_macro"]:.4f} → {results[best_method]["auc_roc_macro"]:.4f} '
-              f'({improvement_auc:+.2f}%)')
-        
-        # Check >4% requirement
-        if improvement_f1 > 4.0 or improvement_auc > 4.0:
-            print(f'\n✓✓ REQUIREMENT MET: Achieved >{improvement_f1:.2f}% improvement (target: >4%)')
-        else:
-            print(f'\n⚠ Requirement not met: {improvement_f1:.2f}% improvement (target: >4%)')
-            print('  Consider: larger dataset, more epochs, or stronger preprocessing')
+    # ========== METHOD SELECTION ==========
+    if use_model_based_routing:
+        print(f"\n✓ Using MODEL-BASED method (Meta-Learning Routing)")
+        print("   Uses neural network trained on preprocessing performance data")
+        print("   Predicts best preprocessing method for each audio sample")
+        print(f"   Available methods: {len(METHOD_ID_TO_NAME)} (including {len([k for k in METHOD_ID_TO_NAME if k >= 5])} advanced techniques)")
+        selected_method = 'Model-Based (Meta-Learning)'
+        pipeline_func = adaptive_pipeline_model_based
+    else:
+        print(f"\n✓ Using GRANULAR method (Rule-Based Routing)")
+        print("   Analyzes each sample with 3 metrics (SNR, Spectral Flatness, Harmonic Ratio)")
+        print("   Routes to 6 different preprocessing strategies based on audio characteristics")
+        selected_method = 'Granular (Rule-Based)'
+        pipeline_func = adaptive_pipeline_granular
     
-    # Functional requirements checklist
+    print('\nGenerating adaptive features...')
+    X_train_adaptive, preprocessing_stats = pipeline_func(X_train_audio)
+    X_test_adaptive, _ = pipeline_func(X_test_audio)
+    
+    print('\nTraining adaptive CNN...')
+    adaptive_model = build_genre_cnn(input_shape, num_classes)
+    adaptive_model.fit(
+        X_train_adaptive, y_train,
+        validation_split=0.15,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        verbose=1
+    )
+    
+    print('\nEvaluating adaptive model...')
+    y_pred_proba_adaptive = adaptive_model.predict(X_test_adaptive, verbose=0)
+    preds_adaptive = np.argmax(y_pred_proba_adaptive, axis=1)
+    
+    adaptive_metrics = calculate_comprehensive_metrics(y_test, preds_adaptive, y_pred_proba_adaptive, genres)
+    
+    print(f'\nAdaptive Results:')
+    print(f'  Accuracy:     {adaptive_metrics["accuracy"]:.4f} ({adaptive_metrics["accuracy"]*100:.2f}%)')
+    print(f'  F1-Score:     {adaptive_metrics["f1_macro"]:.4f}')
+    print(f'  AUC-ROC:      {adaptive_metrics["auc_roc_macro"]:.4f}')
+    print(f'  Precision:    {adaptive_metrics["precision_weighted"]:.4f}')
+    print(f'  Recall:       {adaptive_metrics["recall_weighted"]:.4f}')
+    
+    # Show preprocessing methods used
+    print('\n' + '-'*70)
+    print('PREPROCESSING METHODS APPLIED:')
+    print('-'*70)
+    total_samples = sum(preprocessing_stats.values())
+    for method, count in preprocessing_stats.items():
+        percentage = (count / total_samples) * 100
+        print(f'  {method:20s}: {count:4d} samples ({percentage:5.1f}%)')
+    print(f'  Total:              {total_samples:4d} samples')
+    
+    # ========== STEP 4: COMPARE BASELINE VS ADAPTIVE ==========
     print('\n' + '='*70)
-    print('FUNCTIONAL REQUIREMENTS CHECKLIST')
+    print('STEP 4: FINAL COMPARISON')
     print('='*70)
-    print('✓ Ingest raw audio files with standard preprocessing')
-    print('✓ Baseline pipeline with mel-spectrograms')
-    print(f'✓ Framework with {len(experiments)-1} noise reduction modules')
-    print('✓ Train benchmark CNN model')
-    print('✓ Comprehensive metrics: Accuracy, Precision, Recall, F1, AUC-ROC')
-    print(f'✓ Spectrogram visualizations saved to: {SPECTROGRAMS_DIR}')
+    
+    # Results table
+    print(f'\n{"Metric":<25} {"Baseline":>12} {"Adaptive":>12} {"Improvement":>12}')
+    print('-' * 65)
+    
+    metric_names = [
+        ('Accuracy', 'accuracy'),
+        ('F1-Score (macro)', 'f1_macro'),
+        ('AUC-ROC (macro)', 'auc_roc_macro'),
+        ('Precision (weighted)', 'precision_weighted'),
+        ('Recall (weighted)', 'recall_weighted')
+    ]
+    
+    for metric_name, metric_key in metric_names:
+        baseline_val = baseline_metrics[metric_key]
+        adaptive_val = adaptive_metrics[metric_key]
+        improvement = (adaptive_val - baseline_val) * 100
+        
+        print(f'{metric_name:<25} {baseline_val:>12.4f} {adaptive_val:>12.4f} {improvement:>11.2f}%')
+    
+    # Calculate improvements for file output and validation
+    improvement_f1 = (adaptive_metrics['f1_macro'] - baseline_metrics['f1_macro']) * 100
+    improvement_acc = (adaptive_metrics['accuracy'] - baseline_metrics['accuracy']) * 100
+    improvement_auc = (adaptive_metrics['auc_roc_macro'] - baseline_metrics['auc_roc_macro']) * 100
+    
+    
+    # Per-class comparison
+    print('\n' + '='*70)
+    print('PER-CLASS F1-SCORE COMPARISON')
+    print('='*70)
+    print(f'\n{"Genre":<15} {"Baseline":>12} {"Adaptive":>12} {"Improvement":>12}')
+    print('-' * 55)
+    
+    for genre in genres:
+        baseline_f1 = baseline_metrics['per_class'][genre]['f1']
+        adaptive_f1 = adaptive_metrics['per_class'][genre]['f1']
+        improvement = (adaptive_f1 - baseline_f1) * 100
+        
+        print(f'{genre:<15} {baseline_f1:>12.4f} {adaptive_f1:>12.4f} {improvement:>11.2f}%')
     
     # Save results to file
-    results_file = os.path.join(RESULTS_DIR, 'experiment_results.txt')
+    results_file = os.path.join(RESULTS_DIR, 'baseline_vs_adaptive_results.txt')
     with open(results_file, 'w', encoding='utf-8') as f:
         f.write('='*70 + '\n')
-        f.write('EXPERIMENT RESULTS SUMMARY\n')
+        f.write('BASELINE VS ADAPTIVE PREPROCESSING RESULTS\n')
         f.write('='*70 + '\n\n')
         
-        for exp_name, res in results.items():
-            if 'error' not in res:
-                f.write(f'\n{exp_name}:\n')
-                f.write(f'  Accuracy:     {res["accuracy"]:.4f}\n')
-                f.write(f'  F1-Score:     {res["f1_macro"]:.4f}\n')
-                f.write(f'  AUC-ROC:      {res["auc_roc_macro"]:.4f}\n')
-                f.write(f'  Precision:    {res["precision_weighted"]:.4f}\n')
-                f.write(f'  Recall:       {res["recall_weighted"]:.4f}\n')
-                
-                # Per-class breakdown
-                f.write(f'\n  Per-Class F1-Scores:\n')
-                for genre, metrics in res['per_class'].items():
-                    f.write(f'    {genre:15s}: {metrics["f1"]:.4f}\n')
+        f.write('BASELINE (No Preprocessing):\n')
+        f.write(f'  Accuracy:     {baseline_metrics["accuracy"]:.4f}\n')
+        f.write(f'  F1-Score:     {baseline_metrics["f1_macro"]:.4f}\n')
+        f.write(f'  AUC-ROC:      {baseline_metrics["auc_roc_macro"]:.4f}\n')
+        f.write(f'  Precision:    {baseline_metrics["precision_weighted"]:.4f}\n')
+        f.write(f'  Recall:       {baseline_metrics["recall_weighted"]:.4f}\n\n')
+        
+        f.write('ADAPTIVE (Smart Routing):\n')
+        f.write(f'  Accuracy:     {adaptive_metrics["accuracy"]:.4f}\n')
+        f.write(f'  F1-Score:     {adaptive_metrics["f1_macro"]:.4f}\n')
+        f.write(f'  AUC-ROC:      {adaptive_metrics["auc_roc_macro"]:.4f}\n')
+        f.write(f'  Precision:    {adaptive_metrics["precision_weighted"]:.4f}\n')
+        f.write(f'  Recall:       {adaptive_metrics["recall_weighted"]:.4f}\n\n')
+        
+        f.write('IMPROVEMENTS:\n')
+        f.write(f'  F1-Score:     {improvement_f1:+.2f}%\n')
+        f.write(f'  Accuracy:     {improvement_acc:+.2f}%\n')
+        f.write(f'  AUC-ROC:      {improvement_auc:+.2f}%\n\n')
+        
+        f.write('DATASET ANALYSIS:\n')
+        f.write(f'  Total samples analyzed: {dataset_analysis["total_analyzed"]}\n')
+        f.write(f'  Automatically selected method: {selected_method}\n\n')
+        
+        f.write('  [GRANULAR METHOD] Predicted Preprocessing Routes:\n')
+        granular_routing = dataset_analysis['granular_metrics']['routing']
+        for method, count in granular_routing.items():
+            percentage = (count / dataset_analysis["total_analyzed"]) * 100
+            f.write(f'    {method:25s}: {count:4d} ({percentage:5.1f}%)\n')
+        
+        f.write('\n  [INTELLIGENT METHOD] Predicted Preprocessing Routes:\n')
+        intelligent_routing = dataset_analysis['intelligent_metrics']['routing']
+        for method, count in intelligent_routing.items():
+            percentage = (count / dataset_analysis["total_analyzed"]) * 100
+            f.write(f'    {method:25s}: {count:4d} ({percentage:5.1f}%)\n')
+        
+        f.write('\n  Dataset Quality Metrics:\n')
+        f.write(f'    Average SNR:           {dataset_analysis["granular_metrics"]["snr_mean"]:.2f} dB\n')
+        f.write(f'    Average Quality Score: {dataset_analysis["intelligent_metrics"]["quality_mean"]:.1f}/100\n')
+        f.write(f'    Spectral Flatness:     {dataset_analysis["granular_metrics"]["sf_mean"]:.3f}\n')
+        f.write(f'    Harmonic Ratio:        {dataset_analysis["granular_metrics"]["hr_mean"]:.3f}\n')
+        
+        f.write('\nPREPROCESSING METHODS APPLIED:\n')
+        total_samples = sum(preprocessing_stats.values())
+        for method, count in preprocessing_stats.items():
+            percentage = (count / total_samples) * 100
+            f.write(f'  {method:20s}: {count:4d} samples ({percentage:5.1f}%)\n')
+        f.write(f'  Total:              {total_samples:4d} samples\n\n')
+        
+        f.write('PER-CLASS F1-SCORES:\n')
+        f.write(f'{"Genre":<15} {"Baseline":>12} {"Adaptive":>12} {"Improvement":>12}\n')
+        f.write('-' * 55 + '\n')
+        for genre in genres:
+            baseline_f1 = baseline_metrics['per_class'][genre]['f1']
+            adaptive_f1 = adaptive_metrics['per_class'][genre]['f1']
+            improvement = (adaptive_f1 - baseline_f1) * 100
+            f.write(f'{genre:<15} {baseline_f1:>12.4f} {adaptive_f1:>12.4f} {improvement:>11.2f}%\n')
     
     print(f'\n✓ Results saved to: {results_file}')
     
-    return results
-    print('\n' + '='*70)
-    print('FINAL COMPARISON')
-    print('='*70)
-    for exp_name, res in results.items():
-        if 'error' not in res:
-            print(f'{exp_name:40s} {res["accuracy"]*100:6.2f}%')
-        else:
-            print(f'{exp_name:40s} ERROR: {res["error"]}')
-    
-    # Find best method
-    valid_results = {k: v['accuracy'] for k, v in results.items() if 'error' not in v}
-    if valid_results:
-        best_method = max(valid_results, key=valid_results.get)
-        print(f'\n✓ Best Method: {best_method} ({valid_results[best_method]*100:.2f}%)')
+    return {'baseline': baseline_metrics, 'adaptive': adaptive_metrics}
 
 
 if __name__ == '__main__':
-    run_comparative_experiment()
+    # Run with MODEL-BASED ROUTING (new implementation with meta-learning)
+    # Set use_model_based_routing=False to use rule-based granular routing instead
+    run_comparative_experiment(
+        use_model_based_routing=True,   # Enable neural network routing
+        train_routing_model_flag=True   # Train the routing model first
+    )
+
