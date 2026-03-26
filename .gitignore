@@ -1,0 +1,97 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Datasets (too large for git)
+datasets/
+*.mp3
+*.wav
+*.flac
+*.ogg
+
+# Results and outputs
+results/
+visualizations/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+
+# Models and checkpoints
+*.h5
+*.keras
+*.ckpt
+*.pth
+*.pt
+models/
+checkpoints/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Non-essential project files (exploration scripts, old POCs)
+poc_fma_adaptive.py
+poc_fma_advanced.py
+poc_audioset_adaptive.py
+poc_mgc_adaptive.py
+analyze_results.py
+generate_plots.py
+create_noisy_dataset.py
+visualize_denoising.py
+test_functions.py
+test_preprocessing_impact.py
+download_audioset_music.py
+download_audioset_subset.py
+scripts/
+requirements_advanced.txt
+README_NEW.md
+context prompt poc.txt
+DEMO_PRESENTATION_OUTLINE.md
+*_PRESENTATION*.md
+*.pptx
+*.ppt
+
+node_modules/
+frontend/node_modules/
