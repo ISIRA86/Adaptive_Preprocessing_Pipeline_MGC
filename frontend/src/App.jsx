@@ -23,11 +23,8 @@ import {
   Timer,
   FileAudio,
   Layers,
-  Radio,
   Headphones,
-  Mic2,
   ScanSearch,
-  ShieldCheck,
   GitBranch,
   BarChart2,
   Volume2
@@ -60,6 +57,79 @@ import {
   Area
 } from 'recharts'
 import { api, connectSocket, disconnectSocket } from '@/services/api'
+import { AnimatedBeam } from '@/components/ui/animated-beam'
+
+// ── How It Works: Animated Beam Pipeline ────────────────────────────────────
+const PipelineNode = React.forwardRef(({ icon: Icon, label, desc, step }, ref) => (
+  <div className="flex flex-col items-center gap-2 z-10">
+    <div ref={ref} className="relative w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shadow-sm">
+      <Icon className="h-7 w-7 text-primary" />
+      <span className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-background border border-border flex items-center justify-center text-[9px] font-bold text-muted-foreground">{step}</span>
+    </div>
+    <p className="text-xs font-semibold text-center leading-tight">{label}</p>
+    <p className="text-[10px] text-muted-foreground text-center leading-snug max-w-[90px]">{desc}</p>
+  </div>
+))
+PipelineNode.displayName = 'PipelineNode'
+
+function HowItWorksBeam() {
+  const containerRef = useRef(null)
+  const ref1 = useRef(null)
+  const ref2 = useRef(null)
+  const ref3 = useRef(null)
+  const ref4 = useRef(null)
+  const ref5 = useRef(null)
+
+  return (
+    <Card className="border border-border shadow-sm bg-card overflow-hidden">
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-primary/10">
+            <GitBranch className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <CardTitle>How It Works</CardTitle>
+            <CardDescription>End-to-end adaptive preprocessing pipeline</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-2">
+        {/* Animated beam flow */}
+        <div ref={containerRef} className="relative flex items-start justify-between px-4 py-6 min-h-[160px]">
+          <PipelineNode ref={ref1} step="01" icon={Music}      label="Raw Audio"        desc="FMA track loaded with noise" />
+          <PipelineNode ref={ref2} step="02" icon={ScanSearch} label="Audio Analysis"   desc="SNR, flatness, harmonic ratio" />
+          <PipelineNode ref={ref3} step="03" icon={Brain}      label="Routing"          desc="MLP selects best method" />
+          <PipelineNode ref={ref4} step="04" icon={Zap}        label="Preprocessing"    desc="Spectral gating / HPSS / Wiener" />
+          <PipelineNode ref={ref5} step="05" icon={BarChart2}  label="Classification"   desc="CNN accuracy vs. baseline" />
+
+          <AnimatedBeam containerRef={containerRef} fromRef={ref1} toRef={ref2} delay={0}   startXOffset={32} endXOffset={-32} />
+          <AnimatedBeam containerRef={containerRef} fromRef={ref2} toRef={ref3} delay={0.4} startXOffset={32} endXOffset={-32} />
+          <AnimatedBeam containerRef={containerRef} fromRef={ref3} toRef={ref4} delay={0.8} startXOffset={32} endXOffset={-32} />
+          <AnimatedBeam containerRef={containerRef} fromRef={ref4} toRef={ref5} delay={1.2} startXOffset={32} endXOffset={-32} />
+        </div>
+
+        {/* Routing method pills */}
+        <div className="mt-4 pt-5 border-t border-border/50">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Routing selects from these denoising strategies:</p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { name: 'No Processing',        desc: 'Passthrough for clean audio' },
+              { name: 'Spectral Gating',       desc: 'Suppresses stationary noise floor' },
+              { name: 'HPSS',                  desc: 'Separates harmonic and percussive content' },
+              { name: 'Wiener Filter',          desc: 'Gentle smoothing for broadband noise' },
+              { name: 'Spectral Subtraction',  desc: 'Subtracts estimated noise spectrum' },
+            ].map(({ name, desc }) => (
+              <div key={name} title={desc}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors cursor-default">
+                {name}
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 // Color palette
 const COLORS = ['#667eea', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316']
@@ -105,7 +175,7 @@ function WaveformAnimation({ active = true }) {
       {[...Array(5)].map((_, i) => (
         <div
           key={i}
-          className={`w-1 bg-gradient-to-t from-primary to-purple-500 rounded-full transition-all duration-300 ${
+          className={`w-1 bg-primary rounded-full transition-all duration-300 ${
             active ? 'animate-pulse' : ''
           }`}
           style={{
@@ -122,9 +192,8 @@ function WaveformAnimation({ active = true }) {
 function ParticleBackground() {
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
-      <div className="absolute top-20 left-10 w-72 h-72 bg-purple-500/10 rounded-full filter blur-3xl animate-blob" />
-      <div className="absolute top-40 right-10 w-96 h-96 bg-blue-500/10 rounded-full filter blur-3xl animate-blob animation-delay-200" />
-      <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-pink-500/10 rounded-full filter blur-3xl animate-blob animation-delay-400" />
+      <div className="absolute top-20 left-10 w-72 h-72 bg-green-900/5 rounded-full filter blur-3xl" />
+      <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-green-800/5 rounded-full filter blur-3xl" />
     </div>
   )
 }
@@ -132,10 +201,10 @@ function ParticleBackground() {
 // Glowing Stat Card
 function GlowingStatCard({ icon: Icon, title, value, subtitle, color = 'blue', delay = 0 }) {
   const colorClasses = {
-    blue: 'from-blue-500 to-cyan-500',
-    green: 'from-emerald-500 to-green-500',
-    purple: 'from-purple-500 to-pink-500',
-    orange: 'from-orange-500 to-yellow-500'
+    blue: 'from-teal-600 to-teal-700',
+    green: 'from-green-600 to-green-700',
+    purple: 'from-slate-500 to-slate-600',
+    orange: 'from-stone-500 to-stone-600'
   }
 
   return (
@@ -174,8 +243,8 @@ function ProgressSteps({ currentStep, steps }) {
             <div className="flex flex-col items-center">
               <div className={`
                 relative w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500
-                ${isComplete ? 'bg-gradient-to-br from-green-400 to-emerald-600 shadow-lg shadow-green-500/30' : 
-                  isCurrent ? 'bg-gradient-to-br from-blue-400 to-purple-600 shadow-lg shadow-blue-500/30 animate-pulse' : 
+                ${isComplete ? 'bg-primary shadow-sm' : 
+                  isCurrent ? 'bg-primary/70 animate-pulse' : 
                   'bg-muted'}
               `}>
                 {isComplete ? (
@@ -186,7 +255,7 @@ function ProgressSteps({ currentStep, steps }) {
                   </span>
                 )}
                 {isCurrent && (
-                  <div className="absolute inset-0 rounded-full border-2 border-blue-400 animate-ping opacity-20" />
+                  <div className="absolute inset-0 rounded-full border-2 border-primary animate-ping opacity-20" />
                 )}
               </div>
               <span className={`mt-2 text-xs font-medium ${isCurrent ? 'text-primary' : 'text-muted-foreground'}`}>
@@ -196,7 +265,7 @@ function ProgressSteps({ currentStep, steps }) {
             {index < steps.length - 1 && (
               <div className="flex-1 h-1 mx-2 rounded-full bg-muted overflow-hidden">
                 <div 
-                  className={`h-full bg-gradient-to-r from-green-400 to-emerald-600 transition-all duration-500 ${
+                  className={`h-full bg-primary transition-all duration-500 ${
                     isComplete ? 'w-full' : isCurrent ? 'w-1/2 animate-pulse' : 'w-0'
                   }`}
                 />
@@ -242,7 +311,7 @@ function MethodBadge({ id, name, isNew }) {
       />
       <span className="text-sm font-medium capitalize flex-1">{name.replace(/_/g, ' ')}</span>
       {isNew && (
-        <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full animate-pulse">
+        <span className="px-2 py-0.5 text-[10px] font-semibold uppercase bg-primary text-primary-foreground rounded-full">
           New
         </span>
       )}
@@ -342,13 +411,12 @@ function App() {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl blur-lg opacity-50 animate-pulse" />
-              <div className="relative p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl shadow-lg">
+              <div className="relative p-3 bg-primary rounded-xl shadow-sm">
                 <Waves className="h-6 w-6 text-white" />
               </div>
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
+              <h1 className="text-xl font-bold text-primary">
                 Adaptive Audio Preprocessing
               </h1>
               <p className="text-sm text-muted-foreground flex items-center gap-2">
@@ -398,15 +466,14 @@ function App() {
           <TabsContent value="dashboard" className="space-y-10">
 
             {/* ── Hero ─────────────────────────────────────────────────────── */}
-            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 p-8 md:p-14 text-white">
-              <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-30" />
+            <div className="relative overflow-hidden rounded-2xl bg-primary p-8 md:p-14 text-white">
               <div className="relative z-10 grid md:grid-cols-2 gap-8 items-center">
                 <div>
                   <div className="flex items-center gap-2 mb-5">
-                    <span className="px-3 py-1 text-xs font-bold uppercase tracking-wider bg-white/20 rounded-full backdrop-blur-sm">
+                    <span className="px-3 py-1 text-xs font-semibold uppercase tracking-wider bg-white/15 rounded-full">
                       Final Year Project
                     </span>
-                    <span className="px-3 py-1 text-xs font-bold uppercase tracking-wider bg-emerald-400/30 rounded-full backdrop-blur-sm">
+                    <span className="px-3 py-1 text-xs font-semibold uppercase tracking-wider bg-white/10 rounded-full">
                       Music Genre Classification
                     </span>
                   </div>
@@ -420,7 +487,7 @@ function App() {
                   <div className="flex flex-wrap gap-3">
                     <Button
                       size="lg"
-                      className="bg-white text-purple-700 hover:bg-white/90 shadow-xl font-semibold btn-shine"
+                      className="bg-white text-primary hover:bg-white/90 shadow-md font-semibold"
                       onClick={() => setActiveTab('experiment')}
                     >
                       <Play className="mr-2 h-4 w-4" />
@@ -430,7 +497,7 @@ function App() {
                       <Button
                         size="lg"
                         variant="outline"
-                        className="border-white/40 text-white hover:bg-white/10"
+                        className="border-white/40 text-white hover:bg-white/10 bg-transparent [&>svg]:text-white"
                         onClick={() => setActiveTab('results')}
                       >
                         <BarChart3 className="mr-2 h-4 w-4" />
@@ -458,154 +525,14 @@ function App() {
               </div>
             </div>
 
-            {/* ── How It Works: Pipeline Flow ──────────────────────────────── */}
-            <Card className="border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 overflow-hidden">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-purple-500">
-                    <GitBranch className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <CardTitle>How It Works</CardTitle>
-                    <CardDescription>End-to-end adaptive preprocessing pipeline</CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-2">
-                {/* Flow steps */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  {[
-                    { step: '01', icon: Music, label: 'Raw Audio', desc: 'FMA track loaded — may contain background noise, hiss, or distortion', color: 'from-slate-500 to-slate-600' },
-                    { step: '02', icon: ScanSearch, label: 'Audio Analysis', desc: 'SNR, spectral flatness, harmonic ratio and RMS energy are extracted', color: 'from-blue-500 to-cyan-500' },
-                    { step: '03', icon: Brain, label: 'Routing Decision', desc: 'Trained MLP selects the best denoising method for this specific track', color: 'from-purple-500 to-pink-500' },
-                    { step: '04', icon: Zap, label: 'Preprocessing', desc: 'Selected method applied — spectral gating, HPSS, Wiener filter, etc.', color: 'from-orange-500 to-yellow-500' },
-                    { step: '05', icon: BarChart2, label: 'Classification', desc: 'Cleaned audio classified by CNN — accuracy measured vs. baseline', color: 'from-emerald-500 to-green-500' },
-                  ].map(({ step, icon: Icon, label, desc, color }, i, arr) => (
-                    <React.Fragment key={step}>
-                      <div className="flex flex-col items-center text-center group">
-                        <div className={`relative w-14 h-14 rounded-2xl bg-gradient-to-br ${color} flex items-center justify-center shadow-lg mb-3 group-hover:scale-110 transition-transform duration-300`}>
-                          <Icon className="h-6 w-6 text-white" />
-                          <span className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-background border-2 border-border flex items-center justify-center text-[9px] font-bold text-muted-foreground">{step}</span>
-                        </div>
-                        <p className="text-sm font-semibold mb-1">{label}</p>
-                        <p className="text-xs text-muted-foreground leading-snug">{desc}</p>
-                      </div>
-                      {i < arr.length - 1 && (
-                        <div className="hidden md:flex items-center justify-center col-span-0 self-center -mx-2 mt-[-40px]">
-                          <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
-                        </div>
-                      )}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                {/* Routing method pills */}
-                <div className="mt-8 pt-6 border-t border-border/50">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Routing selects from these denoising strategies:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { name: 'No Processing', desc: 'Passthrough for clean audio', color: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300' },
-                      { name: 'Spectral Gating', desc: 'Estimates stationary noise floor and suppresses it', color: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' },
-                      { name: 'HPSS', desc: 'Separates harmonic and percussive content', color: 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300' },
-                      { name: 'Wiener Filter', desc: 'Gentle smoothing for broadband noise', color: 'bg-pink-100 dark:bg-pink-900/40 text-pink-700 dark:text-pink-300' },
-                      { name: 'Spectral Subtraction', desc: 'Subtracts estimated noise spectrum', color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300' },
-                    ].map(({ name, desc, color }) => (
-                      <div key={name} className={`px-3 py-2 rounded-xl text-xs font-medium ${color} cursor-default hover:scale-105 transition-transform duration-200`} title={desc}>
-                        {name}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* ── Use Cases ────────────────────────────────────────────────── */}
-            <div>
-              <div className="text-center mb-6">
-                <h3 className="text-xl font-bold mb-1">Where This System Can Be Applied</h3>
-                <p className="text-sm text-muted-foreground">Adaptive preprocessing has real-world impact across many audio scenarios</p>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[
-                  {
-                    icon: Radio,
-                    title: 'Broadcast & Streaming',
-                    desc: 'Automatically improve audio quality of user-uploaded tracks from variable-quality sources before indexing.',
-                    examples: ['Podcast platforms', 'Music streaming ingestion', 'Radio archive digitisation'],
-                    gradient: 'from-blue-500 to-cyan-500',
-                    bg: 'from-blue-50 to-cyan-50 dark:from-blue-950/20 dark:to-cyan-950/20',
-                    border: 'border-blue-100 dark:border-blue-900/30',
-                  },
-                  {
-                    icon: Mic2,
-                    title: 'Field Recording Analysis',
-                    desc: 'Classify music recorded at live events, outdoor venues, or studios where background noise is unavoidable.',
-                    examples: ['Concert archiving', 'Ethnomusicology research', 'Live event tagging'],
-                    gradient: 'from-purple-500 to-pink-500',
-                    bg: 'from-purple-50 to-pink-50 dark:from-purple-950/20 dark:to-pink-950/20',
-                    border: 'border-purple-100 dark:border-purple-900/30',
-                  },
-                  {
-                    icon: Headphones,
-                    title: 'Music Library Curation',
-                    desc: 'Rapidly tag and categorise large digitised music collections where recording quality varies widely.',
-                    examples: ['Digital archiving projects', 'Legacy library restoration', 'Music recommendation systems'],
-                    gradient: 'from-emerald-500 to-teal-500',
-                    bg: 'from-emerald-50 to-teal-50 dark:from-emerald-950/20 dark:to-teal-950/20',
-                    border: 'border-emerald-100 dark:border-emerald-900/30',
-                  },
-                  {
-                    icon: ShieldCheck,
-                    title: 'Robust AI Pipelines',
-                    desc: 'Make downstream classification models more resilient to real-world data degradation without retraining.',
-                    examples: ['Audio ML benchmarking', 'Noisy-environment deployment', 'Model robustness research'],
-                    gradient: 'from-orange-500 to-yellow-500',
-                    bg: 'from-orange-50 to-yellow-50 dark:from-orange-950/20 dark:to-yellow-950/20',
-                    border: 'border-orange-100 dark:border-orange-900/30',
-                  },
-                  {
-                    icon: ScanSearch,
-                    title: 'Audio Forensics',
-                    desc: 'Identify genre or content markers from degraded recordings where original quality cannot be guaranteed.',
-                    examples: ['Evidence audio analysis', 'Copyright detection', 'Watermark recovery'],
-                    gradient: 'from-red-500 to-rose-500',
-                    bg: 'from-red-50 to-rose-50 dark:from-red-950/20 dark:to-rose-950/20',
-                    border: 'border-red-100 dark:border-red-900/30',
-                  },
-                  {
-                    icon: Sparkles,
-                    title: 'Research Platform',
-                    desc: 'Benchmark custom preprocessing strategies against rule-based and no-preprocessing baselines with statistical rigour.',
-                    examples: ['FYP / MSc experiments', 'ISMIR / ICASSP benchmarks', 'Ablation studies'],
-                    gradient: 'from-violet-500 to-indigo-500',
-                    bg: 'from-violet-50 to-indigo-50 dark:from-violet-950/20 dark:to-indigo-950/20',
-                    border: 'border-violet-100 dark:border-violet-900/30',
-                  },
-                ].map(({ icon: Icon, title, desc, examples, gradient, bg, border }) => (
-                  <div key={title} className={`p-5 rounded-2xl bg-gradient-to-br ${bg} border ${border} hover:shadow-lg transition-all duration-300 group hover:-translate-y-1`}>
-                    <div className={`inline-flex p-3 rounded-xl bg-gradient-to-br ${gradient} mb-4 shadow-md group-hover:scale-110 transition-transform duration-300`}>
-                      <Icon className="h-5 w-5 text-white" />
-                    </div>
-                    <h4 className="font-bold text-base mb-2">{title}</h4>
-                    <p className="text-sm text-muted-foreground leading-relaxed mb-3">{desc}</p>
-                    <div className="space-y-1">
-                      {examples.map(ex => (
-                        <div key={ex} className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <ChevronRight className="h-3 w-3 text-primary flex-shrink-0" />
-                          {ex}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* ── How It Works: Animated Beam Pipeline ─────────────────────── */}
+            <HowItWorksBeam />
 
             {/* ── Status + CTA ─────────────────────────────────────────────── */}
             <div className="grid md:grid-cols-3 gap-4">
-              <Card className="md:col-span-2 border-0 shadow-lg bg-gradient-to-br from-background to-muted/20">
+              <Card className="md:col-span-2 border border-border shadow-sm bg-card">
                 <CardContent className="flex items-center gap-4 py-5">
-                  <div className={`p-3 rounded-xl ${isRunning ? 'bg-blue-500 animate-pulse' : experimentStatus.status === 'complete' ? 'bg-emerald-500' : 'bg-muted'}`}>
+                  <div className={`p-3 rounded-xl ${isRunning ? 'bg-primary animate-pulse' : experimentStatus.status === 'complete' ? 'bg-primary' : 'bg-muted'}`}>
                     {isRunning ? <Loader2 className="h-5 w-5 text-white animate-spin" /> :
                      experimentStatus.status === 'complete' ? <CheckCircle2 className="h-5 w-5 text-white" /> :
                      <Gauge className="h-5 w-5 text-muted-foreground" />}
@@ -625,7 +552,7 @@ function App() {
               </Card>
               <Button
                 size="lg"
-                className="h-full min-h-[64px] text-base font-semibold bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-xl btn-glow"
+                className="h-full min-h-[64px] text-base font-semibold shadow-md"
                 onClick={() => setActiveTab('experiment')}
                 disabled={isRunning}
               >
@@ -643,11 +570,11 @@ function App() {
           <TabsContent value="experiment" className="space-y-6">
             <div className="grid gap-6 lg:grid-cols-3">
               {/* Configuration Panel */}
-              <Card className="lg:col-span-1 border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in">
+              <Card className="lg:col-span-1 border border-border shadow-sm bg-card animate-fade-in">
                 <CardHeader>
                   <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-purple-500">
-                      <Settings className="h-5 w-5 text-white" />
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Settings className="h-5 w-5 text-primary" />
                     </div>
                     <div>
                       <CardTitle>Configuration</CardTitle>
@@ -699,7 +626,7 @@ function App() {
                 </CardContent>
                 <CardFooter>
                   <Button 
-                    className="w-full h-14 text-lg font-semibold bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-xl btn-glow"
+                    className="w-full h-14 text-lg font-semibold shadow-md"
                     onClick={startExperiment}
                     disabled={isRunning || !connected}
                   >
@@ -719,11 +646,11 @@ function App() {
               </Card>
 
               {/* Progress Panel */}
-              <Card className="lg:col-span-2 border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in animation-delay-100">
+              <Card className="lg:col-span-2 border border-border shadow-sm bg-card animate-fade-in animation-delay-100">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${isRunning ? 'bg-gradient-to-br from-blue-500 to-purple-500 animate-pulse' : 'bg-muted'}`}>
+                      <div className={`p-2 rounded-lg ${isRunning ? 'bg-primary animate-pulse' : 'bg-muted'}`}>
                         {isRunning ? (
                           <Loader2 className="h-5 w-5 text-white animate-spin" />
                         ) : experimentStatus.status === 'complete' ? (
@@ -757,7 +684,7 @@ function App() {
                     </div>
                     <div className="relative h-4 rounded-full bg-muted overflow-hidden">
                       <div 
-                        className={`h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 transition-all duration-500 ${isRunning ? 'progress-striped progress-animated' : ''}`}
+                        className={`h-full bg-primary transition-all duration-500 ${isRunning ? 'progress-striped progress-animated' : ''}`}
                         style={{ width: `${experimentStatus.progress}%` }}
                       />
                     </div>
@@ -775,7 +702,7 @@ function App() {
                       <Activity className="h-4 w-4 text-primary" />
                       Live Logs
                     </h4>
-                    <div className="h-52 overflow-y-auto rounded-xl border bg-black/5 dark:bg-white/5 p-4 font-mono text-xs space-y-1">
+                    <div className="h-80 overflow-y-auto rounded-xl border bg-black/5 dark:bg-white/5 p-4 font-mono text-xs space-y-1">
                       {logs.length === 0 ? (
                         <p className="text-muted-foreground flex items-center gap-2">
                           <Loader2 className="h-3 w-3" />
@@ -803,53 +730,49 @@ function App() {
                 {/* Results Summary Cards */}
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 stagger-children">
                   <div className="animate-fade-in-up opacity-0" style={{ animationDelay: '0ms', animationFillMode: 'forwards' }}>
-                    <Card className="relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-blue-500 to-blue-600 text-white">
-                      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-30" />
+                    <Card className="relative overflow-hidden border border-border shadow-sm bg-card">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-white/80">Baseline Accuracy</CardTitle>
+                        <CardTitle className="text-sm font-medium text-muted-foreground">Baseline Accuracy</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-4xl font-bold">
+                        <div className="text-4xl font-bold text-foreground">
                           <AnimatedNumber value={results.baseline.accuracy * 100} decimals={1} suffix="%" />
                         </div>
                       </CardContent>
                     </Card>
                   </div>
                   <div className="animate-fade-in-up opacity-0" style={{ animationDelay: '100ms', animationFillMode: 'forwards' }}>
-                    <Card className="relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-green-500 to-emerald-600 text-white">
-                      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-30" />
+                    <Card className="relative overflow-hidden border border-primary/30 shadow-sm bg-card">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-white/80">Adaptive Accuracy</CardTitle>
+                        <CardTitle className="text-sm font-medium text-muted-foreground">Adaptive Accuracy</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-4xl font-bold">
+                        <div className="text-4xl font-bold text-primary">
                           <AnimatedNumber value={results.adaptive.accuracy * 100} decimals={1} suffix="%" />
                         </div>
                       </CardContent>
                     </Card>
                   </div>
                   <div className="animate-fade-in-up opacity-0" style={{ animationDelay: '200ms', animationFillMode: 'forwards' }}>
-                    <Card className="relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-purple-500 to-pink-600 text-white">
-                      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-30" />
+                    <Card className="relative overflow-hidden border border-border shadow-sm bg-card">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-white/80">Improvement</CardTitle>
+                        <CardTitle className="text-sm font-medium text-muted-foreground">Improvement</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-4xl font-bold flex items-center gap-2">
-                          <TrendingUp className="h-8 w-8" />
+                        <div className="text-4xl font-bold flex items-center gap-2 text-foreground">
+                          <TrendingUp className="h-8 w-8 text-primary" />
                           <AnimatedNumber value={results.improvements.accuracy} decimals={2} suffix="%" />
                         </div>
                       </CardContent>
                     </Card>
                   </div>
                   <div className="animate-fade-in-up opacity-0" style={{ animationDelay: '300ms', animationFillMode: 'forwards' }}>
-                    <Card className="relative overflow-hidden border-0 shadow-xl bg-gradient-to-br from-orange-500 to-yellow-500 text-white">
-                      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLW9wYWNpdHk9IjAuMSIgc3Ryb2tlLXdpZHRoPSIxIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2dyaWQpIi8+PC9zdmc+')] opacity-30" />
+                    <Card className="relative overflow-hidden border border-border shadow-sm bg-card">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-white/80">F1 Score Gain</CardTitle>
+                        <CardTitle className="text-sm font-medium text-muted-foreground">F1 Score Gain</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-4xl font-bold">
+                        <div className="text-4xl font-bold text-foreground">
                           +<AnimatedNumber value={results.improvements.f1_macro} decimals={2} suffix="%" />
                         </div>
                       </CardContent>
@@ -859,14 +782,14 @@ function App() {
 
                 {/* Routing Accuracy + Test Condition Banner */}
                 <div className="grid gap-4 md:grid-cols-2 animate-fade-in">
-                  <Card className="border-0 shadow-lg bg-gradient-to-br from-cyan-500 to-blue-600 text-white">
+                  <Card className="border border-border shadow-sm bg-card">
                     <CardContent className="flex items-center gap-4 py-4">
-                      <div className="p-3 rounded-xl bg-white/20">
-                        <Brain className="h-6 w-6" />
+                      <div className="p-3 rounded-xl bg-primary/10">
+                        <Brain className="h-6 w-6 text-primary" />
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-white/80">Routing Model Accuracy</p>
-                        <p className="text-3xl font-bold">
+                        <p className="text-sm font-medium text-muted-foreground">Routing Model Accuracy</p>
+                        <p className="text-3xl font-bold text-foreground">
                           {results.routing_accuracy != null
                             ? (results.routing_accuracy * 100).toFixed(1) + '%'
                             : 'N/A'}
@@ -874,14 +797,14 @@ function App() {
                       </div>
                     </CardContent>
                   </Card>
-                  <Card className="border-0 shadow-lg bg-gradient-to-br from-violet-500 to-purple-700 text-white">
+                  <Card className="border border-border shadow-sm bg-card">
                     <CardContent className="flex items-center gap-4 py-4">
-                      <div className="p-3 rounded-xl bg-white/20">
-                        <Waves className="h-6 w-6" />
+                      <div className="p-3 rounded-xl bg-primary/10">
+                        <Waves className="h-6 w-6 text-primary" />
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-white/80">Test Noise Condition</p>
-                        <p className="text-3xl font-bold">
+                        <p className="text-sm font-medium text-muted-foreground">Test Noise Condition</p>
+                        <p className="text-3xl font-bold text-foreground">
                           {results.config?.test_noise_snr > 0
                             ? `${results.config.test_noise_snr} dB SNR`
                             : 'Clean'}
@@ -894,10 +817,10 @@ function App() {
                 {/* Charts Section */}
                 <div className="grid gap-6 lg:grid-cols-2">
                   {/* Metrics Comparison Chart */}
-                  <Card className="border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in">
+                  <Card className="border border-border shadow-sm bg-card animate-fade-in">
                     <CardHeader>
                       <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-purple-500">
+                        <div className="p-2 rounded-lg bg-primary/10">
                           <BarChart3 className="h-5 w-5 text-white" />
                         </div>
                         <div>
@@ -946,11 +869,11 @@ function App() {
                   </Card>
 
                   {/* Preprocessing Distribution */}
-                  <Card className="border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in animation-delay-100">
+                  <Card className="border border-border shadow-sm bg-card animate-fade-in animation-delay-100">
                     <CardHeader>
                       <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500">
-                          <Zap className="h-5 w-5 text-white" />
+                        <div className="p-2 rounded-lg bg-primary/10">
+                          <Zap className="h-5 w-5 text-primary" />
                         </div>
                         <div>
                           <CardTitle>Preprocessing Distribution</CardTitle>
@@ -1013,11 +936,11 @@ function App() {
                       range: label, count: confBuckets[i]
                     }))
                     return (
-                      <Card className="border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in animation-delay-100">
+                      <Card className="border border-border shadow-sm bg-card animate-fade-in animation-delay-100">
                         <CardHeader>
                           <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500">
-                              <Brain className="h-5 w-5 text-white" />
+                            <div className="p-2 rounded-lg bg-primary/10">
+                              <Brain className="h-5 w-5 text-primary" />
                             </div>
                             <div>
                               <CardTitle>Routing Confidence Distribution</CardTitle>
@@ -1041,11 +964,11 @@ function App() {
                   })()}
 
                   {/* Per-Genre Performance */}
-                  <Card className="lg:col-span-2 border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in animation-delay-200">
+                  <Card className="lg:col-span-2 border border-border shadow-sm bg-card animate-fade-in animation-delay-200">
                     <CardHeader>
                       <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-yellow-500">
-                          <Music className="h-5 w-5 text-white" />
+                        <div className="p-2 rounded-lg bg-primary/10">
+                          <Music className="h-5 w-5 text-primary" />
                         </div>
                         <div>
                           <CardTitle>Per-Genre F1 Score Comparison</CardTitle>
@@ -1088,7 +1011,7 @@ function App() {
                 </div>
 
                 {/* Export Section */}
-                <Card className="border-0 shadow-xl bg-gradient-to-br from-background to-muted/30 animate-fade-in">
+                <Card className="border border-border shadow-sm bg-card animate-fade-in">
                   <CardHeader>
                     <div className="flex items-center gap-3">
                       <div className="p-2 rounded-lg bg-gradient-to-br from-green-500 to-emerald-500">
@@ -1101,7 +1024,7 @@ function App() {
                     </div>
                   </CardHeader>
                   <CardContent className="flex gap-4">
-                    <Button onClick={() => api.exportJSON()} className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 shadow-lg btn-shine">
+                    <Button onClick={() => api.exportJSON()} className="shadow-sm">
                       <Download className="mr-2 h-4 w-4" />
                       Export JSON
                     </Button>
@@ -1113,7 +1036,7 @@ function App() {
                 </Card>
               </>
             ) : (
-              <Card className="border-0 shadow-xl bg-gradient-to-br from-background to-muted/30">
+              <Card className="border border-border shadow-sm bg-card">
                 <CardContent className="flex flex-col items-center justify-center py-20">
                   <div className="p-6 rounded-full bg-muted/50 mb-6 animate-bounce-subtle">
                     <BarChart3 className="h-16 w-16 text-muted-foreground" />
@@ -1124,7 +1047,7 @@ function App() {
                   </p>
                   <Button 
                     onClick={() => setActiveTab('experiment')}
-                    className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-xl btn-shine"
+                    className="shadow-sm"
                   >
                     <Play className="mr-2 h-4 w-4" />
                     Start Experiment
@@ -1140,10 +1063,10 @@ function App() {
       <footer className="border-t mt-16 bg-muted/30">
         <div className="container mx-auto px-4 py-8 text-center">
           <div className="flex items-center justify-center gap-3 mb-3">
-            <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg">
-              <Waves className="h-4 w-4 text-white" />
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <Waves className="h-4 w-4 text-primary" />
             </div>
-            <span className="font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            <span className="font-semibold text-primary">
               Adaptive Audio Preprocessing
             </span>
           </div>
