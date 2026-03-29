@@ -141,7 +141,6 @@ def audio_to_mel(audio, sr=SR, n_mels=N_MELS, n_fft=N_FFT, hop_length=HOP_LENGTH
 
 
 def baseline_pipeline(audio_batch):
-    """No denoising - direct conversion to mel-spectrograms."""
     X = []
     for audio in audio_batch:
         mel = audio_to_mel(audio)

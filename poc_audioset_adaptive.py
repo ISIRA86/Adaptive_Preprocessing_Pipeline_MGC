@@ -1,15 +1,3 @@
-"""
-POC: Adaptive Denoising for AudioSet Dataset
-
-AudioSet contains 2M+ 10-second clips from YouTube with real-world noise.
-This POC uses a subset focusing on music-related classes.
-
-Dataset: https://research.google.com/audioset/
-For this POC, we'll use the balanced train set (22k clips, ~10GB)
-
-Note: AudioSet requires youtube-dl and proper setup. 
-Alternative: Use pre-downloaded AudioSet from Kaggle or academic sources.
-"""
 import os
 import glob
 import random

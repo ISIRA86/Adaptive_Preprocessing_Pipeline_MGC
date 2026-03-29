@@ -14,18 +14,8 @@ from scipy import signal
 import matplotlib
 matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.signal import medfilt2d
 import warnings
 warnings.filterwarnings('ignore')
-
-# Try to import pywt for wavelet denoising (optional)
-try:
-    import pywt
-    PYWT_AVAILABLE = True
-except ImportError:
-    PYWT_AVAILABLE = False
-    print("WARNING: pywt not available. Wavelet denoising will be disabled.")
 
 
 # ----------------------------- CONFIG ---------------------------------
@@ -52,14 +42,6 @@ FMA_METADATA = os.path.join(_PROJECT_ROOT, 'datasets', 'fma_metadata', 'tracks.c
 
 TARGET_GENRES = ['Electronic', 'Experimental', 'Folk', 'Hip-Hop',
                  'Instrumental', 'International', 'Pop', 'Rock']
-
-# AudioSet music subset (6 genres with clean AudioSet mappings)
-AUDIOSET_MUSIC_DIR = os.path.join(_PROJECT_ROOT, 'datasets', 'audioset_music')
-AUDIOSET_TARGET_GENRES = ['Electronic', 'Folk', 'Hip-Hop', 'International', 'Pop', 'Rock']
-
-# LUFS target
-
-TARGET_LUFS = -23.0  
 
 # Output directories
 RESULTS_DIR = os.path.join(_PROJECT_ROOT, 'results')
@@ -98,99 +80,6 @@ def denoise_spectral_gating(audio, n_fft=N_FFT, hop_length=HOP_LENGTH,
         return audio
 
 
-
-
-# ======================== LUFS NORMALIZATION =====================
-def normalize_lufs(audio, target_lufs=TARGET_LUFS, sr=SR):
-    try:
-        import pyloudnorm as pyln
-        
-        # Check for invalid audio first
-        if not np.isfinite(audio).all():
-            return audio
-        
-        # Check if audio is too quiet (avoid division by zero)
-        if np.abs(audio).max() < 1e-8:
-            return audio
-        
-        meter = pyln.Meter(sr)
-        current_loudness = meter.integrated_loudness(audio)
-        
-        # Check if loudness measurement is valid
-        if not np.isfinite(current_loudness) or current_loudness < -70:
-            # Audio is too quiet, just return normalized by peak
-            peak = np.abs(audio).max()
-            if peak > 0:
-                return audio / peak * 0.1
-            return audio
-        
-        # Normalize to target
-        normalized_audio = pyln.normalize.loudness(audio, current_loudness, target_lufs)
-        
-        # Safety check: ensure output is finite
-        if not np.isfinite(normalized_audio).all():
-            return audio
-        
-        # Clip to prevent distortion
-        normalized_audio = np.clip(normalized_audio, -1.0, 1.0)
-        
-        return normalized_audio
-    
-    except Exception as e:
-        # If anything goes wrong, return original audio
-        print(f"Warning: LUFS normalization failed ({e}), returning original audio")
-        return audio
-
-
-
-
-# ======================== ADAPTIVE ROUTING LOGIC ======================
-def characterize_audio_type(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
-    try:
-        analysis_audio = audio[:SR * 10] if len(audio) > SR * 10 else audio
-        
-        # Spectral flatness (tonal vs noise-like)
-        sf = librosa.feature.spectral_flatness(y=analysis_audio, n_fft=n_fft, hop_length=hop_length)
-        mean_sf = float(np.mean(sf))
-        
-        # Harmonic-to-noise ratio (use margin parameter to reduce memory)
-        harmonic, percussive = librosa.effects.hpss(analysis_audio, margin=3.0)
-        harmonic_energy = np.sum(harmonic ** 2)
-        percussive_energy = np.sum(percussive ** 2)
-        total_energy = harmonic_energy + percussive_energy
-        
-        harmonic_ratio = harmonic_energy / (total_energy + 1e-8)
-        
-        # Spectral centroid (frequency content)
-        sc = librosa.feature.spectral_centroid(y=analysis_audio, sr=SR, n_fft=n_fft, hop_length=hop_length)
-        mean_sc = float(np.mean(sc))
-        
-        # Decision logic
-        if mean_sf > 0.7:
-            return 'broadband_noise'  # High noise floor → Spectral gating
-        elif harmonic_ratio > 0.7:
-            return 'harmonic_rich'  # Strong harmonics → HPSS
-        elif 1500 < mean_sc < 4000:
-            return 'vocal_heavy'  # Mid-frequency energy → Spleeter
-        else:
-            return 'general'  # Everything else → Demucs ML
-    
-    except MemoryError:
-        # Fallback: Use simpler analysis without HPSS
-        print("  [Memory warning: Using simplified characterization]")
-        sf = librosa.feature.spectral_flatness(y=audio[:SR*5], n_fft=n_fft, hop_length=hop_length)
-        mean_sf = float(np.mean(sf))
-        
-        if mean_sf > 0.7:
-            return 'broadband_noise'
-        elif mean_sf < 0.3:
-            return 'harmonic_rich'
-        else:
-            return 'general'
-    
-    except Exception as e:
-        print(f"  [Warning: Characterization error: {e}, using 'general']")
-        return 'general'
 
 
 # ======================== FEATURE EXTRACTION ==========================
@@ -410,115 +299,6 @@ def assess_audio_quality(audio, sr=SR):
     return quality_score, needs_preprocessing, recommendation
 
 
-def adaptive_pipeline_intelligent(audio_batch):
-    X = []
-    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
-    
-    method_stats = {
-        'skipped_high_quality': 0,
-        'very_light_denoising': 0,
-        'light_denoising': 0,
-        'moderate_denoising': 0
-    }
-    
-    quality_scores = []
-    
-    for audio in audio_batch:
-        # Assess audio quality intelligently
-        quality_score, needs_preprocessing, recommendation = assess_audio_quality(audio)
-        quality_scores.append(quality_score)
-        
-        processed_audio = audio.copy()
-        
-        if recommendation == 'skip':
-            method_stats['skipped_high_quality'] += 1
-            
-        elif recommendation == 'very_light':
-            processed_audio = denoise_spectral_gating(audio, threshold_db=-50, alpha=0.02)
-            method_stats['very_light_denoising'] += 1
-            
-        elif recommendation == 'light':
-            # Fair quality (40-60) → 5% noise reduction
-            processed_audio = denoise_spectral_gating(audio, threshold_db=-45, alpha=0.05)
-            method_stats['light_denoising'] += 1
-            
-        else:  # moderate
-            # Poor quality (<40) → 10% noise reduction
-            processed_audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.10)
-            method_stats['moderate_denoising'] += 1
-        
-        features = feature_func(processed_audio)
-        X.append(features)
-    
-    # Statistics
-    avg_quality = np.mean(quality_scores)
-    min_quality = np.min(quality_scores)
-    max_quality = np.max(quality_scores)
-    
-    print(f'  Intelligent quality-based preprocessing:')
-    print(f'    Average quality score: {avg_quality:.1f}/100')
-    print(f'    Quality range: {min_quality:.1f} - {max_quality:.1f}')
-    print(f'  ')
-    for method, count in method_stats.items():
-        if count > 0:
-            pct = (count / len(audio_batch)) * 100
-            print(f'    {method:25s}: {count:4d} samples ({pct:5.1f}%)')
-    
-    return np.array(X)[..., np.newaxis], method_stats
-
-
-def adaptive_pipeline_minimal(audio_batch):
-    X = []
-    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
-    
-    method_stats = {
-        'no_preprocessing': 0,
-        'very_light_denoising': 0,
-        'moderate_denoising': 0
-    }
-    
-    for audio in audio_batch:
-        # Quick SNR estimation (first 5 seconds only)
-        signal_power = np.mean(audio[:SR*5]**2)
-        noise_estimate = np.std(audio[:1000])  # First 1000 samples as noise floor
-        snr_db = 10 * np.log10(signal_power / (noise_estimate**2 + 1e-10))
-        
-        # Spectral flatness (noise indicator)
-        sf = librosa.feature.spectral_flatness(y=audio[:SR*5], n_fft=N_FFT, hop_length=HOP_LENGTH)
-        mean_sf = float(np.mean(sf))
-        
-        processed_audio = audio.copy()
-        
-        # ULTRA-CONSERVATIVE: Only process very noisy samples
-        if snr_db < 10 and mean_sf > 0.75:
-            # VERY noisy (SNR < 10dB, high noise floor) → Moderate denoising
-            # This should be <5% of FMA-medium samples
-            processed_audio = denoise_spectral_gating(audio, threshold_db=-45, alpha=0.05)  # Very gentle
-            method_stats['moderate_denoising'] += 1
-            
-        elif snr_db < 15 and mean_sf > 0.7:
-            # Moderately noisy → Very light denoising (5% reduction)
-            # This should be ~5-10% of samples
-            processed_audio = denoise_spectral_gating(audio, threshold_db=-50, alpha=0.02)  # Extremely gentle
-            method_stats['very_light_denoising'] += 1
-            
-        else:
-            # Everything else (85-90% of samples) → NO PREPROCESSING
-            # Preserve original audio to maintain genre characteristics
-            method_stats['no_preprocessing'] += 1
-        
-        features = feature_func(processed_audio)
-        X.append(features)
-    
-    print(f'  Minimal preprocessing applied:')
-    for method, count in method_stats.items():
-        if count > 0:
-            pct = (count / len(audio_batch)) * 100
-            print(f'    {method:25s}: {count:4d} samples ({pct:5.1f}%)')
-    
-    return np.array(X)[..., np.newaxis], method_stats
-
-
 # ======================== MODEL-BASED ROUTING SYSTEM ====================
 
 def extract_audio_features_for_routing(audio, sr=SR):
@@ -634,14 +414,6 @@ def apply_preprocessing_method(audio, method_id):
         return denoise_wiener_filter_gentle(audio)
     elif method_id == 4:
         return denoise_spectral_subtraction_gentle(audio)
-    elif method_id == 5:
-        return denoise_wavelet(audio)
-    elif method_id == 6:
-        return denoise_non_local_means(audio)
-    elif method_id == 7:
-        return denoise_adaptive_wiener(audio)
-    elif method_id == 8:
-        return denoise_multiband_spectral_subtraction(audio)
     else:
         return audio
 
@@ -781,7 +553,7 @@ def train_routing_model(audio_batch, labels, n_samples=500, classifier_model=Non
     final_accuracy = history.history['accuracy'][-1]
     print(f"\n✓ Routing model training complete. Final accuracy: {final_accuracy:.3f}")
     
-    return ROUTING_MODEL, final_accuracy
+    return ROUTING_MODEL, final_accuracy, history
 
 
 def adaptive_pipeline_model_based(audio_batch, return_decisions=False):
@@ -940,49 +712,6 @@ def adaptive_pipeline_granular(audio_batch):
     return np.array(X)[..., np.newaxis], method_stats
 
 
-def adaptive_pipeline_hpss(audio_batch):
-    X = []
-    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
-    
-    routing_stats = {
-        'broadband_noise': 0,
-        'harmonic_rich': 0,
-        'vocal_heavy': 0,
-        'general': 0
-    }
-    
-    for audio in audio_batch:
-        # Characterize audio
-        audio_type = characterize_audio_type(audio)
-        routing_stats[audio_type] += 1
-        
-        # Route to appropriate method (aggressive preprocessing)
-        if audio_type == 'broadband_noise':
-            audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.1)
-        elif audio_type == 'harmonic_rich':
-            harmonic, percussive = librosa.effects.hpss(audio, margin=3.0)
-            audio = harmonic  # Keep only harmonic (removes percussion!)
-        elif audio_type == 'vocal_heavy':
-            audio = denoise_spectral_gating(audio, threshold_db=-35, alpha=0.15)
-        else:  # general
-            audio = denoise_spectral_gating(audio, threshold_db=-40, alpha=0.1)
-        
-        features = feature_func(audio)
-        X.append(features)
-    
-    print(f'  HPSS Pipeline routing: Broadband={routing_stats["broadband_noise"]}, '
-          f'Harmonic={routing_stats["harmonic_rich"]}, '
-          f'Vocal={routing_stats["vocal_heavy"]}, '
-          f'General={routing_stats["general"]}')
-    
-    return np.array(X)[..., np.newaxis], routing_stats
-
-
-# Legacy alias for backward compatibility
-adaptive_pipeline = adaptive_pipeline_hpss
-
-
-# ==================== GENTLE PREPROCESSING ====================
 def denoise_spectral_subtraction_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
     """Gentle spectral subtraction"""
     stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
@@ -993,30 +722,6 @@ def denoise_spectral_subtraction_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGT
     
     stft_clean = mag_clean * np.exp(1j * phase)
     audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
-    return audio_clean
-
-
-def denoise_median_filtering_gentle(audio, kernel_size=5):
-    """Gentle median filtering"""
-    # Convert to mel-spectrogram
-    mel = librosa.feature.melspectrogram(y=audio, sr=SR, n_mels=N_MELS, n_fft=N_FFT)
-    mel_db = librosa.power_to_db(mel, ref=np.max)
-    
-    # Apply gentle median filter
-    mel_filtered = medfilt2d(mel_db, kernel_size=kernel_size)
-    
-    # Blend 60% filtered + 40% original (preserve musical content)
-    mel_blended = 0.6 * mel_filtered + 0.4 * mel_db
-    
-    # Convert back (approximate)
-    mel_power = librosa.db_to_power(mel_blended)
-    audio_clean = librosa.feature.inverse.mel_to_audio(mel_power, sr=SR, n_fft=N_FFT, hop_length=HOP_LENGTH)
-    
-    if len(audio_clean) > len(audio):
-        audio_clean = audio_clean[:len(audio)]
-    elif len(audio_clean) < len(audio):
-        audio_clean = np.pad(audio_clean, (0, len(audio) - len(audio_clean)))
-    
     return audio_clean
 
 
@@ -1039,213 +744,6 @@ def denoise_wiener_filter_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
     audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
     return audio_clean
 
-
-# ======================== ADVANCED PREPROCESSING TECHNIQUES ============
-
-def denoise_wavelet(audio, wavelet='db4', level=4, threshold_scale=0.5):
-    if not PYWT_AVAILABLE:
-        return audio  # Fallback to original if pywt not available
-    
-    try:
-        # Decompose signal
-        coeffs = pywt.wavedec(audio, wavelet, level=level)
-        
-        # Calculate threshold using MAD (Median Absolute Deviation)
-        sigma = np.median(np.abs(coeffs[-1])) / 0.6745
-        threshold = sigma * np.sqrt(2 * np.log(len(audio))) * threshold_scale
-        
-        # Apply soft thresholding to detail coefficients
-        coeffs_thresh = [coeffs[0]]  # Keep approximation coefficients
-        for detail_coeff in coeffs[1:]:
-            coeffs_thresh.append(pywt.threshold(detail_coeff, threshold, mode='soft'))
-        
-        # Reconstruct signal
-        audio_clean = pywt.waverec(coeffs_thresh, wavelet)
-        
-        # Match length
-        if len(audio_clean) > len(audio):
-            audio_clean = audio_clean[:len(audio)]
-        elif len(audio_clean) < len(audio):
-            audio_clean = np.pad(audio_clean, (0, len(audio) - len(audio_clean)))
-        
-        return audio_clean
-    except:
-        return audio  # Return original on error
-
-
-def denoise_non_local_means(audio, patch_size=512, search_window=2048, h=0.1):
-    try:
-        audio_clean = np.zeros_like(audio)
-        weights_sum = np.zeros_like(audio)
-        
-        n = len(audio)
-        half_patch = patch_size // 2
-        half_search = search_window // 2
-        
-        # Process each position (downsampled for efficiency)
-        stride = patch_size // 4
-        for i in range(half_patch, n - half_patch, stride):
-            # Extract reference patch
-            ref_patch = audio[i - half_patch:i + half_patch]
-            
-            # Search window bounds
-            search_start = max(half_patch, i - half_search)
-            search_end = min(n - half_patch, i + half_search)
-            
-            # Compare with patches in search window
-            for j in range(search_start, search_end, stride):
-                # Extract comparison patch
-                comp_patch = audio[j - half_patch:j + half_patch]
-                
-                # Calculate patch distance
-                distance = np.sum((ref_patch - comp_patch) ** 2) / patch_size
-                
-                # Calculate weight using Gaussian kernel
-                weight = np.exp(-distance / (h ** 2))
-                
-                # Accumulate weighted patches
-                audio_clean[i] += weight * audio[j]
-                weights_sum[i] += weight
-        
-        # Normalize
-        mask = weights_sum > 0
-        audio_clean[mask] /= weights_sum[mask]
-        
-        # Fill gaps with original values
-        audio_clean[~mask] = audio[~mask]
-        
-        return audio_clean
-    except:
-        return audio  # Return original on error
-
-
-def denoise_adaptive_wiener(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
-    try:
-        stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
-        mag, phase = np.abs(stft), np.angle(stft)
-        
-        # Adaptive noise estimation using minimum statistics
-        noise_profile = np.ones_like(mag) * np.inf
-        window_size = 10
-        
-        for i in range(mag.shape[1]):
-            start = max(0, i - window_size)
-            end = min(mag.shape[1], i + window_size)
-            noise_profile[:, i] = np.min(mag[:, start:end], axis=1)
-        
-        # Time-varying signal and noise power
-        signal_power = mag ** 2
-        noise_power = noise_profile ** 2
-        
-        # Adaptive Wiener gain with frequency-dependent floor
-        freq_bins = np.arange(mag.shape[0]) / mag.shape[0]
-        min_gain = 0.3 + 0.4 * freq_bins.reshape(-1, 1)  # Higher floor for low freq
-        
-        wiener_gain = signal_power / (signal_power + noise_power + 1e-8)
-        wiener_gain = np.maximum(wiener_gain, min_gain)
-        
-        # Apply gain
-        mag_clean = mag * wiener_gain
-        
-        # Reconstruct
-        stft_clean = mag_clean * np.exp(1j * phase)
-        audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
-        
-        return audio_clean
-    except:
-        return audio
-
-
-def denoise_multiband_spectral_subtraction(audio, n_fft=N_FFT, hop_length=HOP_LENGTH, n_bands=4):
-    try:
-        stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
-        mag, phase = np.abs(stft), np.angle(stft)
-        
-        # Estimate noise from initial frames
-        noise_profile = np.mean(mag[:, :10], axis=1)
-        
-        # Divide spectrum into bands
-        n_freq_bins = mag.shape[0]
-        band_size = n_freq_bins // n_bands
-        
-        mag_clean = np.zeros_like(mag)
-        
-        for band_idx in range(n_bands):
-            start_bin = band_idx * band_size
-            end_bin = (band_idx + 1) * band_size if band_idx < n_bands - 1 else n_freq_bins
-            
-            # Band-specific parameters (more conservative for low frequencies)
-            alpha = 2.0 - 0.3 * band_idx  # Oversubtraction factor
-            beta = 0.01 * (band_idx + 1)  # Spectral floor
-            
-            # Extract band
-            mag_band = mag[start_bin:end_bin, :]
-            noise_band = noise_profile[start_bin:end_bin].reshape(-1, 1)
-            
-            # Spectral subtraction
-            mag_band_clean = mag_band - alpha * noise_band
-            mag_band_clean = np.maximum(mag_band_clean, beta * mag_band)
-            
-            mag_clean[start_bin:end_bin, :] = mag_band_clean
-        
-        # Reconstruct
-        stft_clean = mag_clean * np.exp(1j * phase)
-        audio_clean = librosa.istft(stft_clean, hop_length=hop_length, length=len(audio))
-        
-        return audio_clean
-    except:
-        return audio
-
-
-# ======================== END ADVANCED PREPROCESSING ====================
-
-
-def characterize_noise_type_gentle(audio, n_fft=N_FFT, hop_length=HOP_LENGTH):
-    """Conservative noise characterization"""
-    sf = librosa.feature.spectral_flatness(y=audio, n_fft=n_fft, hop_length=hop_length)
-    mean_sf = float(np.mean(sf))
-    
-    sc = librosa.feature.spectral_centroid(y=audio, sr=SR, n_fft=n_fft, hop_length=hop_length)
-    mean_sc = float(np.mean(sc))
-    
-    zcr = librosa.feature.zero_crossing_rate(y=audio, hop_length=hop_length)
-    mean_zcr = float(np.mean(zcr))
-    
-    # Conservative thresholds
-    if mean_sf > 0.75:
-        return 'broadband'
-    elif mean_sc < 1500:
-        return 'lowfreq'
-    elif mean_zcr > 0.20:
-        return 'transient'
-    else:
-        return 'general'
-
-
-def adaptive_pipeline_gentle(audio_batch):
-    X = []
-    feature_func = audio_to_multi_features if USE_MULTI_FEATURES else audio_to_mel
-    noise_stats = {'broadband': 0, 'lowfreq': 0, 'transient': 0, 'general': 0}
-    
-    for audio in audio_batch:
-        noise_type = characterize_noise_type_gentle(audio)
-        noise_stats[noise_type] += 1
-        
-        if noise_type == 'broadband':
-            audio_clean = denoise_spectral_subtraction_gentle(audio)
-        elif noise_type in ['lowfreq', 'transient']:
-            audio_clean = denoise_median_filtering_gentle(audio)
-        else:  # general
-            audio_clean = denoise_wiener_filter_gentle(audio)
-        
-        features = feature_func(audio_clean)
-        X.append(features)
-    
-    print(f'  Gentle preprocessing: Broadband={noise_stats["broadband"]}, '
-          f'LowFreq={noise_stats["lowfreq"]}, Transient={noise_stats["transient"]}, '
-          f'General={noise_stats["general"]}')
-    
-    return np.array(X)[..., np.newaxis], noise_stats
 
 
 # ==================== DATASET-LEVEL NOISE ANALYSIS ====================
@@ -1430,64 +928,6 @@ def analyze_dataset_noise(audio_batch, sample_size=8000):
     }
 
 
-def calculate_preprocessing_scores(dataset_analysis):
-    granular_metrics = dataset_analysis['granular_metrics']
-    intelligent_metrics = dataset_analysis['intelligent_metrics']
-    
-    # Score GRANULAR method (best for diverse/noisy datasets)
-    # Higher score when: varied SNR, varied spectral flatness, needs different preprocessing per sample
-    snr_mean = granular_metrics['snr_mean']
-    sf_mean = granular_metrics['sf_mean']
-    routing = granular_metrics['routing']
-    total = dataset_analysis['total_analyzed']
-    
-    # How diverse is the preprocessing needed?
-    preprocessing_diversity = sum(1 for count in routing.values() if count > total * 0.05)
-    no_preprocessing_pct = routing['no_preprocessing'] / total * 100
-    
-    granular_score = 0
-    granular_score += (100 - no_preprocessing_pct) * 0.4  # Higher if samples need preprocessing
-    granular_score += preprocessing_diversity * 10         # Higher if diverse preprocessing needed
-    granular_score += (sf_mean * 100) * 0.3               # Higher if noisy (high spectral flatness)
-    granular_score += max(0, (25 - snr_mean)) * 2         # Higher if low SNR
-    
-    
-    quality_mean = intelligent_metrics['quality_mean']
-    excellent_pct = intelligent_metrics['excellent_pct']
-    skip_pct = intelligent_metrics['routing']['skipped_high_quality'] / total * 100
-    
-    intelligent_score = 0
-    intelligent_score += quality_mean * 0.5               # Higher if high average quality
-    intelligent_score += excellent_pct * 0.8              # Higher if many excellent samples
-    intelligent_score += skip_pct * 0.6                   # Higher if most can skip preprocessing
-    
-    # Recommendation
-    if intelligent_score > granular_score:
-        recommendation = 'intelligent'
-        confidence = (intelligent_score - granular_score) / max(intelligent_score, granular_score)
-    else:
-        recommendation = 'granular'
-        confidence = (granular_score - intelligent_score) / max(intelligent_score, granular_score)
-    
-    # Override if scores are close (within 10 points)
-    if abs(granular_score - intelligent_score) < 10:
-        recommendation = 'granular'
-        confidence = 0.5
-    
-    return {
-        'granular_score': granular_score,
-        'intelligent_score': intelligent_score,
-        'recommendation': recommendation,
-        'confidence': confidence,
-        'reasoning': {
-            'snr_mean': snr_mean,
-            'quality_mean': quality_mean,
-            'preprocessing_diversity': preprocessing_diversity,
-            'no_preprocessing_pct': no_preprocessing_pct,
-            'excellent_quality_pct': excellent_pct
-        }
-    }
-
 
 # ======================== MODEL ARCHITECTURE ==========================
 def build_genre_cnn(input_shape, num_classes):
@@ -1527,17 +967,6 @@ def build_genre_cnn(input_shape, num_classes):
     )
     return model
 
-
-def get_training_callbacks(patience=7):
-    """Standard callbacks for CNN training: LR scheduling + early stopping."""
-    return [
-        keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.5, patience=3, min_lr=1e-6, verbose=0
-        ),
-        keras.callbacks.EarlyStopping(
-            monitor='val_loss', patience=patience, restore_best_weights=True, verbose=0
-        ),
-    ]
 
 
 # ======================== SILENT NOISE ADDITION ======================
@@ -1679,102 +1108,6 @@ def load_fma_dataset(max_samples=None):
     for g in sorted(final_dist):
         pct = final_dist[g] / total * 100
         print(f'  {g:<15}: {final_dist[g]:4d} ({pct:5.1f}%)')
-
-    genre_to_idx = {g: i for i, g in enumerate(sorted(set(y)))}
-    y_idx = np.array([genre_to_idx[g] for g in y], dtype=np.int32)
-
-    return X, y_idx, list(genre_to_idx.keys())
-
-
-# ======================== AUDIOSET DATASET LOADING ====================
-def load_audioset_music_dataset(max_samples=None):
-    AUDIOSET_CLIP_DURATION = 10  # AudioSet segments are 10 seconds
-
-    if not os.path.isdir(AUDIOSET_MUSIC_DIR):
-        raise FileNotFoundError(
-            f'AudioSet music directory not found: {AUDIOSET_MUSIC_DIR}\n'
-            f'Run:  python scripts/download_audioset_music.py --max-per-genre 500'
-        )
-
-    genre_dirs = sorted([
-        d for d in os.listdir(AUDIOSET_MUSIC_DIR)
-        if os.path.isdir(os.path.join(AUDIOSET_MUSIC_DIR, d))
-        and d in AUDIOSET_TARGET_GENRES
-    ])
-
-    if not genre_dirs:
-        raise FileNotFoundError(
-            f'No genre subdirectories found under {AUDIOSET_MUSIC_DIR}.\n'
-            f'Run:  python scripts/download_audioset_music.py --max-per-genre 500'
-        )
-
-    print(f'Loading AudioSet music dataset from {AUDIOSET_MUSIC_DIR} ...')
-    print(f'  Found genres: {genre_dirs}')
-
-    # Collect all WAV files across genres
-    all_files = []
-    for genre in genre_dirs:
-        genre_dir = os.path.join(AUDIOSET_MUSIC_DIR, genre)
-        wavs = glob.glob(os.path.join(genre_dir, '*.wav'))
-        for w in wavs:
-            all_files.append((w, genre))
-
-    if max_samples and len(all_files) > max_samples:
-        # Stratified sub-sample to keep genre balance
-        import random
-        random.shuffle(all_files)
-        # Keep proportional split
-        per_genre_limit = max_samples // len(genre_dirs)
-        genre_counts = defaultdict(int)
-        filtered = []
-        for fp, genre in all_files:
-            if genre_counts[genre] < per_genre_limit:
-                filtered.append((fp, genre))
-                genre_counts[genre] += 1
-        all_files = filtered
-
-    print(f'  Loading {len(all_files)} audio files...')
-
-    X, y = [], []
-    skipped = 0
-
-    for i, (filepath, genre) in enumerate(all_files):
-        try:
-            audio, sr = librosa.load(
-                filepath,
-                sr=SR,
-                duration=AUDIOSET_CLIP_DURATION,
-                mono=True
-            )
-
-            if len(audio) < SR * 3:   # need at least 3 seconds
-                skipped += 1
-                continue
-
-            signal_power = np.mean(audio ** 2)
-            if signal_power < 1e-8:   # silence guard
-                skipped += 1
-                continue
-
-            X.append(audio)
-            y.append(genre)
-
-            if (i + 1) % 100 == 0:
-                print(f'  Processed {i + 1}/{len(all_files)} files, loaded {len(X)} valid tracks...')
-
-        except KeyboardInterrupt:
-            raise
-        except Exception:
-            skipped += 1
-            continue
-
-    print(f'Loaded {len(X)} AudioSet tracks, skipped {skipped} files')
-
-    # Print class distribution
-    from collections import Counter
-    dist = Counter(y)
-    for g in sorted(dist):
-        print(f'  {g:<15}: {dist[g]:>4} clips')
 
     genre_to_idx = {g: i for i, g in enumerate(sorted(set(y)))}
     y_idx = np.array([genre_to_idx[g] for g in y], dtype=np.int32)
