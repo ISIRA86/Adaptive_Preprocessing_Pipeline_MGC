@@ -293,7 +293,7 @@ def run_experiment_async(max_samples, epochs, routing_samples, test_noise_snr=0)
         log(f"Testing 5 preprocessing methods on {routing_samples} samples...", "INFO")
         emit_progress('training_routing', 52, f'Testing 5 methods on {routing_samples} samples...')
         
-        routing_model, routing_accuracy = train_routing_model(
+        routing_model, routing_accuracy, _ = train_routing_model(
             X_train_audio,
             y_train,
             n_samples=routing_samples,

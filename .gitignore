@@ -8,6 +8,8 @@ env/
 venv/
 .venv/
 ENV/
+# Dev scripts runtime
+.poc_pids.json
 build/
 develop-eggs/
 dist/
