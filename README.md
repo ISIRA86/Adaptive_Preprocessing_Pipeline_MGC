@@ -112,7 +112,7 @@ Model-based routing achieves a **35% reduction in confidence interval width** ov
 
 ## Dataset Setup
 
-Download FMA-Medium from [https://github.com/mdeff/fma](https://github.com/mdeff/fma) and place as:
+Download FMA-Medium from [https://www.kaggle.com/datasets/imsparsh/fma-free-music-archive-small-medium?select=fma_medium](https://www.kaggle.com/datasets/imsparsh/fma-free-music-archive-small-medium?select=fma_medium) and place as:
 
 ```
 datasets/
